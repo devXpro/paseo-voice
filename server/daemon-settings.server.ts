@@ -30,6 +30,12 @@ export const DEFAULT_PROMPT = [
   "tables and log lines are never spoken aloud — say what they mean in a sentence instead",
   '("запускаю тесты", "три из сорока упали") and leave the literal text in the chat where it',
   "can be read. Outside voice mode this instruction does not apply and the speak tool is absent.",
+  "",
+  "Finishing is always said aloud, however small the thing was: one short sentence naming",
+  "what is now done. A message that is mostly a hash, a table or a column of numbers is",
+  "still announced — say what it means and leave the figures on the screen. Going quiet",
+  "because the result looks like machinery is the one failure that reads, to somebody not",
+  "watching the screen, as the work never having happened.",
 ].join(" ");
 
 export type DaemonSettings = {
