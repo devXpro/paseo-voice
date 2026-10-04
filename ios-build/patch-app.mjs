@@ -204,6 +204,39 @@ await splice(
   "the phone asks the plugin for the cue",
 );
 
+/**
+ * 5. Looping, rather than one play and a silence as long as the track.
+ *
+ * The next play is scheduled after the previous one *finishes* — `engine.play` resolves
+ * on completion, not on queueing — and the delay was the track's own length on top of
+ * that. For upstream's three-second ding that gave ding, pause, ding, which is what a
+ * notification tone should do. For a minute of music it gives a minute of music and
+ * then a minute of silence, which reads as the cue having stopped.
+ *
+ * The length term goes. What is left is the gap, which this plugin already sets to
+ * zero, so the track runs continuously.
+ */
+await splice(
+  app("src/voice/voice-runtime.ts"),
+  `          cue.timeout = setTimeout(
+            playNext,
+            THINKING_TONE_NATIVE_PCM_DURATION_MS + THINKING_TONE_REPEAT_GAP_MS,
+          );`,
+  `          cue.timeout = setTimeout(playNext, THINKING_TONE_REPEAT_GAP_MS);`,
+  "the cue loops instead of pausing for its own length",
+);
+
+// The constant above was its only use, and an unused import fails the build.
+await splice(
+  app("src/voice/voice-runtime.ts"),
+  `import {
+  THINKING_TONE_NATIVE_PCM_BASE64,
+  THINKING_TONE_NATIVE_PCM_DURATION_MS,
+} from "@/utils/thinking-tone.native-pcm";`,
+  `import { THINKING_TONE_NATIVE_PCM_BASE64 } from "@/utils/thinking-tone.native-pcm";`,
+  "the now-unused duration import",
+);
+
 // 3. The test that pins the old tone's length, which would now fail the build.
 await splice(
   app("src/utils/thinking-tone.test.ts"),

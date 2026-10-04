@@ -77,9 +77,62 @@ const appendedOf = (config: Json): string => {
   return typeof value === "string" ? value : "";
 };
 
-/** Takes `ours` out of a larger prompt without disturbing whatever else is in there. */
-const without = (appended: string, ours: string): string =>
-  ours && appended.includes(ours) ? appended.split(ours).join("").trim() : appended.trim();
+/**
+ * What this plugin writes is wrapped, so it can be found again whatever its wording
+ * becomes.
+ *
+ * Matching on the text itself was the bug: `enable` looked for the paragraph it was
+ * about to write, and after an update that paragraph is not what is in the config —
+ * the previous version is. So the old copy was never found, the new one went in beside
+ * it, and the appended prompt doubled on every release. It had reached two copies here
+ * before anybody noticed.
+ */
+const BEGIN = "<!-- paseo-voice -->";
+const END = "<!-- /paseo-voice -->";
+
+/** How every version shipped before the markers began. Fixed, and ours to keep fixed. */
+const LEGACY_OPENING = "When Paseo voice mode is active";
+
+/** Our paragraph, wrapped for next time. */
+const marked = (ours: string): string => `${BEGIN}\n${ours}\n${END}`;
+
+/**
+ * Takes every copy of ours out of a larger prompt, leaving anybody else's alone.
+ *
+ * Three passes, because three kinds of copy can be in there: marked blocks, an exact
+ * unmarked match of what the caller knows it wrote, and an unmarked block from a
+ * version whose wording is now unknown. The last is recognised by its opening sentence
+ * and runs to the blank line that separates appended paragraphs.
+ */
+function without(appended: string, ...ours: string[]): string {
+  let text = appended;
+
+  for (;;) {
+    const from = text.indexOf(BEGIN);
+    const to = text.indexOf(END, from + BEGIN.length);
+    if (from === -1 || to === -1) {
+      break;
+    }
+    text = text.slice(0, from) + text.slice(to + END.length);
+  }
+
+  for (const one of ours) {
+    if (one && text.includes(one)) {
+      text = text.split(one).join("");
+    }
+  }
+
+  for (;;) {
+    const from = text.indexOf(LEGACY_OPENING);
+    if (from === -1) {
+      break;
+    }
+    const gap = text.indexOf("\n\n", from);
+    text = text.slice(0, from) + (gap === -1 ? "" : text.slice(gap + 2));
+  }
+
+  return text.trim();
+}
 
 /**
  * Asks the daemon to re-read its config. Both settings are watched, so this takes
@@ -97,12 +150,16 @@ export function reloadDaemon(): Promise<string> {
   });
 }
 
-/** `ours` is the text the plugin last wrote, which is what makes it recognisable. */
+/**
+ * `ours` is the text the plugin last wrote. The markers are checked first: after an
+ * update the config holds the previous wording, and asking only "is my current text in
+ * there" answers no about a paragraph that is plainly ours.
+ */
 export async function inspect(ours: string): Promise<DaemonSettings> {
   try {
     const config = await read();
     const appended = appendedOf(config);
-    const mine = ours !== "" && appended.includes(ours);
+    const mine = appended.includes(BEGIN) || (ours !== "" && appended.includes(ours));
     return {
       mcpInjected: object(object(config.daemon).mcp).injectIntoAgents === true,
       promptSet: mine,
@@ -132,8 +189,9 @@ export async function enable(ours: string, previous = ours): Promise<void> {
 
   // Appended rather than replacing: somebody may have their own instruction in there,
   // and losing it silently would be worse than not helping at all.
-  const rest = without(appendedOf(config), previous);
-  daemon.appendSystemPrompt = rest ? `${rest}\n\n${ours}` : ours;
+  const rest = without(appendedOf(config), previous, ours);
+  const mine = marked(ours);
+  daemon.appendSystemPrompt = rest ? `${rest}\n\n${mine}` : mine;
 
   config.daemon = daemon;
   await write(config);
@@ -160,8 +218,9 @@ export async function replacePrompt(previous: string, next: string): Promise<voi
     return;
   }
   const daemon = object(config.daemon);
-  const rest = without(appended, previous);
-  daemon.appendSystemPrompt = rest ? `${rest}\n\n${next}` : next;
+  const rest = without(appended, previous, next);
+  const mine = marked(next);
+  daemon.appendSystemPrompt = rest ? `${rest}\n\n${mine}` : mine;
   config.daemon = daemon;
   await write(config);
 }

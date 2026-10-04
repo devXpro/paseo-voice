@@ -94,7 +94,10 @@ test("an edited prompt replaces its predecessor rather than piling up beside it"
   assert.ok(!appended.includes(OURS), "and the old one gone");
   assert.ok(appended.startsWith("Всегда отвечай по-русски."), "somebody else's text is still untouched");
   assert.equal((await inspect(EDITED)).promptSet, true);
-  assert.equal((await inspect(OURS)).promptSet, false);
+  // Asked about the superseded wording it still says yes, and that is the point: the
+  // block is marked as ours, so recognising it no longer depends on guessing which
+  // version of the text a running plugin happens to be carrying.
+  assert.equal((await inspect(OURS)).promptSet, true);
 });
 
 test("editing while switched off touches nothing in the config", async () => {
@@ -122,4 +125,58 @@ test("a missing config file is not an error, just everything off", async () => {
 
   await enable(OURS);
   assert.equal((await inspect(OURS)).mcpInjected, true);
+});
+
+/**
+ * The bug these cover, found in a live config holding two copies of the same
+ * paragraph: `enable` looked for the text it was about to write, which after a plugin
+ * update is not what is in the config — the previous wording is. So the old copy was
+ * never found, the new one went in beside it, and the prompt grew on every release.
+ */
+const SHIPPED_BEFORE = "When Paseo voice mode is active, speak everything aloud.";
+const SHIPPED_NOW = "When Paseo voice mode is active, speak everything aloud, briefly.";
+
+test("an update whose wording changed replaces the old copy instead of joining it", async () => {
+  const home = await withHome({});
+  const { enable } = await import("./daemon-settings.server.ts");
+  // The version that shipped last month, then the one that ships today. The plugin
+  // knows only its own current text, which is exactly the situation that broke.
+  await enable(SHIPPED_BEFORE);
+  await enable(SHIPPED_NOW);
+
+  const appended = (await readConfig(home)).daemon.appendSystemPrompt as string;
+  assert.equal(appended.split(SHIPPED_BEFORE).length - 1, 0, "старая редакция должна уйти");
+  assert.equal(appended.split(SHIPPED_NOW).length - 1, 1, "новая должна быть ровно одна");
+});
+
+test("a config that already piled up copies is cleaned on the next enable", async () => {
+  const piled = `${SHIPPED_BEFORE}\n\n${SHIPPED_BEFORE}\n\n${SHIPPED_NOW}`;
+  const home = await withHome({ daemon: { appendSystemPrompt: piled } });
+  const { enable } = await import("./daemon-settings.server.ts");
+  await enable(SHIPPED_NOW);
+
+  const appended = (await readConfig(home)).daemon.appendSystemPrompt as string;
+  assert.equal(appended.split("When Paseo voice mode is active").length - 1, 1);
+});
+
+test("somebody else's paragraph survives all of that", async () => {
+  const theirs = "Всегда отвечай по-русски.";
+  const home = await withHome({ daemon: { appendSystemPrompt: `${theirs}\n\n${SHIPPED_BEFORE}` } });
+  const { enable } = await import("./daemon-settings.server.ts");
+  await enable(SHIPPED_NOW);
+
+  const appended = (await readConfig(home)).daemon.appendSystemPrompt as string;
+  assert.ok(appended.includes(theirs), "чужой текст трогать нельзя");
+  assert.equal(appended.split(SHIPPED_BEFORE).length - 1, 0);
+});
+
+test("ours is recognised after an update, before anything is rewritten", async () => {
+  const home = await withHome({});
+  const { enable, inspect } = await import("./daemon-settings.server.ts");
+  await enable(SHIPPED_BEFORE);
+  // The plugin restarts carrying new text and asks whether the config is still its own.
+  const state = await inspect(SHIPPED_NOW);
+  assert.equal(state.promptSet, true);
+  assert.equal(state.foreignPrompt, false);
+  void home;
 });
