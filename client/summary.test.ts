@@ -28,6 +28,7 @@ const base: Status = {
   steady: true,
   phoneSafe: false,
   language: "russian",
+  proxy: { listening: true, port: 8123, error: "" },
   wired: true,
   restartRequired: false,
   settings: { mcpInjected: true, promptSet: true, foreignPrompt: false, configPath: "", error: "" },

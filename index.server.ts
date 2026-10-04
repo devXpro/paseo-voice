@@ -9,6 +9,7 @@ import {
   installBinary as installBinaryRpc,
   preview,
   refreshCloud,
+  restartProxy,
   revertPatch,
   setActiveModel,
   setCloudVoice,
@@ -41,7 +42,13 @@ const ENGINE_PORT = DEFAULTS.port + 1;
 
 export default function contribute(server: PluginServerContext) {
   const engine = createEngine({ port: ENGINE_PORT, log });
-  const controller = createController({ engine, log });
+  // `proxy` is created below and read lazily, so the controller can report its state
+  // without the two having to know about each other at construction time.
+  const controller = createController({
+    engine,
+    log,
+    proxy: () => ({ ...proxy.state(), port: PROXY_PORT }),
+  });
 
   // `contribute` has to stay synchronous, so the proxy is built against a snapshot of
   // the choice that is refreshed on every status call and every mutation.
@@ -99,6 +106,19 @@ export default function contribute(server: PluginServerContext) {
   server.handle(setSteady, async (input) => fresh(await controller.setSteady(input.steady)));
   server.handle(setKey, async (input) => fresh(await controller.setKey(input.key)));
   server.handle(refreshCloud, async () => fresh(await controller.refreshCloud()));
+
+  /**
+   * Brings the proxy back by hand.
+   *
+   * Start-up already retries for half a minute, which covers the daemon-replacing-
+   * itself case this exists for. This is for when that was not enough and somebody
+   * has since freed the port: without it the only cure is reloading the plugin.
+   */
+  server.handle(restartProxy, async () => {
+    await proxy.stop().catch(() => {});
+    await proxy.start().catch((failure: unknown) => log(`voice: restart failed: ${String(failure)}`));
+    return fresh(await controller.status());
+  });
   server.handle(setPrompt, async (input) => fresh(await controller.setPrompt(input.text)));
   server.handle(applyPatch, async () => fresh(await controller.applyPatch()));
   server.handle(revertPatch, async () => fresh(await controller.revertPatch()));

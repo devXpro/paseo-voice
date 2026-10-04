@@ -29,13 +29,35 @@ export type ProxyOptions = {
   /** Read per request, so a change in the surface takes effect on the next sentence. */
   choice: () => Choice;
   log?: (line: string) => void;
+  patience?: BindPatience;
 };
 
 export type Proxy = {
   start(): Promise<void>;
   stop(): Promise<void>;
   port: number;
+  /** Whether it is listening, and why not when it is not. For the panel to show. */
+  state(): { listening: boolean; error: string };
 };
+
+/**
+ * How long to keep trying when the port is taken.
+ *
+ * Taken is almost always temporary and almost always Paseo itself: the daemon is
+ * replaced, the new one loads this plugin within a second, and the old one is still
+ * finishing the sentence it was speaking — still holding the port. It let go two
+ * seconds later. The old code tried once, logged, and gave up for good, which is how
+ * speech went silent in the middle of a conversation with nothing on screen to say so.
+ *
+ * Killing whatever holds the port was considered and rejected. Here it would have
+ * meant killing the daemon mid-sentence, and in general it means firing at a process
+ * this plugin cannot identify. Waiting solves the real case and risks nothing.
+ */
+const BIND_ATTEMPTS = 10;
+const BIND_BACKOFF_MS = 1_500;
+
+/** Overridable so a test can prove the giving-up path without sitting through it. */
+export type BindPatience = { attempts?: number; backoffMs?: number };
 
 function readBody(request: import("node:http").IncomingMessage): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -57,7 +79,10 @@ function readBody(request: import("node:http").IncomingMessage): Promise<string>
  */
 export function createProxy(options: ProxyOptions): Proxy {
   const { port, engine, choice, log = () => {} } = options;
+  const attempts = options.patience?.attempts ?? BIND_ATTEMPTS;
+  const backoffMs = options.patience?.backoffMs ?? BIND_BACKOFF_MS;
   let server: Server | null = null;
+  let lastError = "";
 
   function refuse(response: import("node:http").ServerResponse, status: number, message: string) {
     response.writeHead(status, { "content-type": "application/json" });
@@ -200,7 +225,41 @@ export function createProxy(options: ProxyOptions): Proxy {
       const bound = server?.address();
       return bound && typeof bound === "object" ? bound.port : port;
     },
-    start() {
+    state() {
+      return { listening: server !== null, error: lastError };
+    },
+    async start() {
+      for (let attempt = 1; ; attempt += 1) {
+        try {
+          await listenOnce();
+          lastError = "";
+          return;
+        } catch (failure) {
+          const busy = (failure as { code?: string }).code === "EADDRINUSE";
+          lastError = failure instanceof Error ? failure.message : String(failure);
+          if (!busy || attempt >= attempts) {
+            log(`voice: proxy could not start after ${attempt} attempt(s): ${lastError}`);
+            throw failure;
+          }
+          log(`voice: port ${port} busy, retrying (${attempt}/${attempts})`);
+          await new Promise((wake) => setTimeout(wake, attempt * backoffMs));
+        }
+      }
+    },
+    stop() {
+      return new Promise((resolve) => {
+        const instance = server;
+        server = null;
+        if (!instance) {
+          resolve();
+          return;
+        }
+        instance.close(() => resolve());
+      });
+    },
+  };
+
+  function listenOnce(): Promise<void> {
       return new Promise((resolve, reject) => {
         const instance = createServer((request, response) => {
           const url = request.url ?? "";
@@ -257,17 +316,5 @@ export function createProxy(options: ProxyOptions): Proxy {
         });
         instance.once("error", reject);
       });
-    },
-    stop() {
-      return new Promise((resolve) => {
-        const instance = server;
-        server = null;
-        if (!instance) {
-          resolve();
-          return;
-        }
-        instance.close(() => resolve());
-      });
-    },
-  };
+  }
 }

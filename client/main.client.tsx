@@ -15,6 +15,7 @@ import {
   type modelId,
   preview,
   refreshCloud,
+  restartProxy,
   revertPatch,
   setActiveModel,
   setCloudVoice,
@@ -140,6 +141,7 @@ export function VoiceSurface({ theme, layout }: PluginSurfaceProps) {
   const cueVolumeRpc = useRpc(setCueVolume);
   const cuePreviewRpc = useRpc(previewCue);
   const refreshRpc = useRpc(refreshCloud);
+  const restartProxyRpc = useRpc(restartProxy);
   const keyRpc = useRpc(setKey);
   const promptRpc = useRpc(setPrompt);
   const applyPatchRpc = useRpc(applyPatch);
@@ -221,6 +223,7 @@ export function VoiceSurface({ theme, layout }: PluginSurfaceProps) {
   });
   // Google is asked to confirm the key before it is kept, so this one waits on a
   // round trip to Google and back rather than on a file being written.
+  const restarting = useMutation({ mutationFn: () => restartProxyRpc({}), onSuccess: seed, onError: fail });
   const savingKey = useMutation({
     mutationFn: (key: string) => keyRpc({ key }),
     onSuccess: seed,
@@ -423,6 +426,56 @@ export function VoiceSurface({ theme, layout }: PluginSurfaceProps) {
   const wide = !layout.compact;
   const current = SECTIONS.find((section) => section.id === open) ?? (wide ? SECTIONS[0]! : null);
 
+  /**
+   * Shown above everything when the local server is down.
+   *
+   * Nothing else in the panel would say so: every section keeps rendering its settings
+   * and the plugin still reports itself as running, while speech has silently stopped
+   * because the one port it all goes through was never bound. This is the only place
+   * that failure becomes visible without reading a log.
+   */
+  const alarm =
+    data.proxy.listening ? null : (
+      <View
+        style={{
+          backgroundColor: theme.colors.surface1,
+          borderColor: theme.colors.statusWarning,
+          borderWidth: 1,
+          borderRadius: 14,
+          padding: 14,
+          marginBottom: 12,
+          gap: 8,
+        }}
+      >
+        <Text style={{ color: theme.colors.statusWarning, fontSize: 15, fontWeight: "600" }}>
+          Речь не работает: порт {data.proxy.port} не занят плагином
+        </Text>
+        <Text style={{ color: theme.colors.foregroundMuted, fontSize: 13, lineHeight: 18 }}>
+          {data.proxy.error
+            ? `Не удалось встать на порт: ${data.proxy.error}`
+            : "Локальный сервер не поднялся."}{" "}
+          Обычно это проходит само за пару секунд, и плагин полминуты пробует снова. Если
+          дошло до этого сообщения — порт держит кто-то посторонний.
+        </Text>
+        <Pressable
+          onPress={() => restarting.mutate()}
+          disabled={restarting.isPending}
+          style={({ pressed }) => ({
+            alignSelf: "flex-start",
+            paddingVertical: 8,
+            paddingHorizontal: 14,
+            borderRadius: 8,
+            opacity: restarting.isPending ? 0.4 : pressed ? 0.7 : 1,
+            backgroundColor: theme.colors.accent,
+          })}
+        >
+          <Text style={{ color: theme.colors.accentForeground, fontSize: 14, fontWeight: "600" }}>
+            {restarting.isPending ? "Поднимаю…" : "Поднять заново"}
+          </Text>
+        </Pressable>
+      </View>
+    );
+
   /** The index: every section with its state on the right, readable without opening anything. */
   const index = (
     <View
@@ -482,12 +535,14 @@ export function VoiceSurface({ theme, layout }: PluginSurfaceProps) {
     if (!current) {
       return (
         <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 48 }}>
+          {alarm}
           {index}
         </ScrollView>
       );
     }
     return (
       <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 48 }}>
+        {alarm}
         <Pressable onPress={() => setOpen(null)} style={{ marginBottom: 14 }}>
           <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
             <Text style={{ color: theme.colors.accent, fontSize: 17 }}>‹</Text>
@@ -509,6 +564,7 @@ export function VoiceSurface({ theme, layout }: PluginSurfaceProps) {
         contentContainerStyle={{ padding: 16 }}
       >
         <Text style={{ color: theme.colors.foreground, fontSize: 19, fontWeight: "700", marginBottom: 14 }}>Голос</Text>
+        {alarm}
         {index}
       </ScrollView>
       <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 24, paddingBottom: 48, maxWidth: WIDE_ENOUGH }}>

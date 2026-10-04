@@ -150,6 +150,17 @@ export const status = z.object({
   phoneSafe: z.boolean().default(true),
   language: z.string().default("russian"),
 
+  /**
+   * The local HTTP server everything speaks through. It can fail to come up while the
+   * rest of the plugin is perfectly alive — a port still held by a daemon that is
+   * shutting down — and then speech simply stops with nothing on screen to explain it.
+   */
+  proxy: z.object({
+    listening: z.boolean().default(false),
+    port: z.number().int().positive().default(8123),
+    error: z.string().default(""),
+  }),
+
   wired: z.boolean().default(false),
   restartRequired: z.boolean().default(false),
   settings: daemonSettings,
@@ -215,6 +226,9 @@ export const setKey = defineRpc({
   input: z.object({ key: z.string().max(200) }),
   output: status,
 });
+
+/** Brings the local server back up after it failed to bind. */
+export const restartProxy = defineRpc({ name: "voice.restart-proxy", input: z.object({}), output: status });
 
 /** Re-reads the key file and asks Google for its catalogue again. */
 export const refreshCloud = defineRpc({ name: "voice.refresh-cloud", input: z.object({}), output: status });

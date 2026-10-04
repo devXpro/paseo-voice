@@ -83,8 +83,13 @@ async function engineSpeakers(port: number): Promise<string[]> {
   }
 }
 
-export function createController(options: { engine: Engine; log?: (line: string) => void }): Controller {
-  const { engine, log = () => {} } = options;
+export function createController(options: {
+  engine: Engine;
+  log?: (line: string) => void;
+  /** Read at snapshot time: the proxy is owned by the entry point, not by this. */
+  proxy?: () => { listening: boolean; port: number; error: string };
+}): Controller {
+  const { engine, log = () => {}, proxy = () => ({ listening: false, port: 0, error: "" }) } = options;
   // Set after a config write: the daemon resolves speech providers once, at startup.
   let restartRequired = false;
   let binaryRelease: string | null = null;
@@ -152,6 +157,7 @@ export function createController(options: { engine: Engine; log?: (line: string)
       phoneSafe: stored.phoneSafe,
       language: stored.language,
 
+      proxy: proxy(),
       wired: await isWired(stored.port),
       restartRequired,
       settings: await inspectSettings(stored.prompt),
