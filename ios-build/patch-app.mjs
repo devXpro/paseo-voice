@@ -37,10 +37,18 @@ const { cue: track, volume } = await chosenCue();
 
 const app = (...parts) => path.join(checkout, "packages/app", ...parts);
 
-/** Replaces one exact string, and complains rather than guessing when it is not there. */
+/**
+ * Replaces one exact string, and complains rather than guessing when it is not there.
+ *
+ * "Already applied" is decided by the replacement being present, not by the anchor
+ * being absent. Several of these keep their anchor and add around it, and the older
+ * test said such a patch had not been applied yet — so running the patcher twice over
+ * one checkout inserted them twice, which the compiler then rejected as a duplicate
+ * key. `build.sh` resets the tree first and never saw it; running by hand does.
+ */
 async function splice(file, find, replace, what) {
   const source = await readFile(file, "utf8");
-  if (source.includes(replace) && !source.includes(find)) {
+  if (source.includes(replace)) {
     console.log(`  = ${what}: already in place`);
     return;
   }
