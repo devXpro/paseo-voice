@@ -1,0 +1,38 @@
+{
+  "name": "paseo-voice",
+  "version": "0.1.0",
+  "description": "Russian speech for Paseo voice mode: Google Cloud TTS, music instead of the waiting beep, and fixes for the sentences Paseo drops.",
+  "license": "MIT",
+  "author": "Roman Yarmolenko",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/devXpro/paseo-voice.git"
+  },
+  "homepage": "https://github.com/devXpro/paseo-voice#readme",
+  "bugs": {
+    "url": "https://github.com/devXpro/paseo-voice/issues"
+  },
+  "keywords": [
+    "paseo",
+    "paseo-plugin",
+    "tts",
+    "text-to-speech",
+    "russian",
+    "google-cloud"
+  ],
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "node --test"
+  },
+  "devDependencies": {
+    "@getpaseo/plugin": "0.10.3",
+    "@tanstack/react-query": "^5.90.11",
+    "@types/node": "^24.0.0",
+    "@types/react": "~19.2.0",
+    "react": "19.1.0",
+    "react-native": "0.81.5",
+    "typescript": "^5.9.3",
+    "zod": "^4.4.3"
+  }
+}

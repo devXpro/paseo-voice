@@ -1,0 +1,5 @@
+{
+  "id": "voice",
+  "description": "Russian speech for Paseo voice mode: Google Cloud TTS with a local Qwen3-TTS fallback, music instead of the waiting beep, and fixes for the sentences Paseo drops.",
+  "requirements": { "paseo": ">=0.10.0" }
+}

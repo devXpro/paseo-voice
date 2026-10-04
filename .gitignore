@@ -1,0 +1,27 @@
+# Installed dependencies. The daemon supplies the SDK, zod and react to the plugin at
+# build time, so these exist only for `tsc --noEmit` and `node --test` on a dev machine.
+node_modules/
+
+# Secrets have no business here, and the only one this plugin holds lives outside the
+# repository on purpose — in ~/.paseo-voice, mode 600. These patterns exist so that a
+# copy made "just for a second" cannot be committed by a careless `git add .`.
+*key*.txt
+*.pem
+*.p12
+*.mobileprovision
+.env
+.env.*
+
+# Everything the plugin writes at runtime goes to ~/.paseo-voice. This catches the case
+# where somebody points it here instead.
+.paseo-voice/
+music/
+models/
+
+# Build and editor leavings.
+dist/
+*.log
+*.tsbuildinfo
+.DS_Store
+.idea/
+.vscode/
