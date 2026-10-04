@@ -4,6 +4,7 @@ import {
   applyToPaseo,
   disableSpeech,
   enableSpeech,
+  fetchCue,
   getStatus,
   installBinary as installBinaryRpc,
   preview,
@@ -146,6 +147,40 @@ export default function contribute(server: PluginServerContext) {
       return { wavBase64: wavOf(trimmed).toString("base64"), seconds: durationSeconds(trimmed), error: "" };
     } catch (failure) {
       return { wavBase64: "", seconds: 0, error: failure instanceof Error ? failure.message : String(failure) };
+    }
+  });
+
+  /**
+   * The cue, for a phone.
+   *
+   * Capped, unlike the desktop's: there the audio crosses loopback and a whole track
+   * costs nothing, here it crosses a relay. A minute is long enough that the loop is
+   * not noticeable and small enough to send once.
+   */
+  const PHONE_CAP_SECONDS = 60;
+
+  server.handle(fetchCue, async (input) => {
+    try {
+      const at = await controller.choice();
+      const tag = `${at.cue}:${at.cueVolume}:${PHONE_CAP_SECONDS}`;
+      if (input.have === tag) {
+        return { tag, unchanged: true, pcmBase64: "", rate: 16_000, seconds: 0, error: "" };
+      }
+      const track = await renderCue(at.cue, at.cueVolume, PHONE_CAP_SECONDS);
+      return {
+        tag,
+        unchanged: false,
+        pcmBase64: track.pcm.toString("base64"),
+        rate: track.rate,
+        seconds: track.durationMs / 1000,
+        error: "",
+      };
+    } catch (failure) {
+      // Answered rather than thrown: the phone's fallback is the track built into it,
+      // and a rejected RPC there would read as a crash rather than as "keep what you
+      // have".
+      const message = failure instanceof Error ? failure.message : String(failure);
+      return { tag: "", unchanged: false, pcmBase64: "", rate: 16_000, seconds: 0, error: message };
     }
   });
 

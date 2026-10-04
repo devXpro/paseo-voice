@@ -233,6 +233,32 @@ export const setCueVolume = defineRpc({
 
 export const setCue = defineRpc({ name: "voice.set-cue", input: z.object({ cue: z.string().min(1) }), output: status });
 
+/**
+ * The waiting cue as the phone needs it: raw 16 kHz PCM, base64.
+ *
+ * The desktop fetches this over loopback, which a phone cannot do — it is a different
+ * device, usually on a different network, reaching the daemon through a relay. But it
+ * is already holding that connection, and a plugin RPC rides it, so this is the same
+ * trick by the only road available.
+ *
+ * `have` is whatever the caller played last. Matching it answers `unchanged` with no
+ * audio attached, which is the normal case on every pause after the first: two
+ * megabytes per pause over somebody's uplink would be its own bug.
+ */
+export const fetchCue = defineRpc({
+  name: "voice.cue",
+  input: z.object({ have: z.string().default("") }),
+  output: z.object({
+    /** Identifies track, volume and cap together — changing any of them changes it. */
+    tag: z.string(),
+    unchanged: z.boolean(),
+    pcmBase64: z.string().default(""),
+    rate: z.number().int().positive().default(16000),
+    seconds: z.number().nonnegative().default(0),
+    error: z.string().default(""),
+  }),
+});
+
 /** Renders one cue so it can be auditioned before a build is spent on it. */
 export const previewCue = defineRpc({
   name: "voice.preview-cue",

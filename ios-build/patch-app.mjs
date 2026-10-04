@@ -98,6 +98,112 @@ await splice(
   "the silence before the first play",
 );
 
+/**
+ * 4. The cue, asked of the plugin instead of only being the one built in.
+ *
+ * On the desktop a patch points Paseo's own bundle at this plugin's proxy over
+ * loopback, so changing the track is heard on the next repeat. A phone cannot do that:
+ * it is a different device, usually on a different network, and it reaches the daemon
+ * through a relay. But it is already holding that connection, and a plugin RPC rides
+ * it — so the phone asks the daemon, the daemon asks the plugin, and the answer comes
+ * back the same way.
+ *
+ * The bytes built into the app stay as the fallback. With no daemon, or an older
+ * plugin that does not know the call, the cue is whatever was compiled in rather than
+ * silence.
+ */
+await splice(
+  app("src/voice/voice-runtime.ts"),
+  `  setAssistantAudioPlaying(isPlaying: boolean): void;
+}`,
+  `  setAssistantAudioPlaying(isPlaying: boolean): void;
+  /** paseo-voice: the cue chosen in the plugin's panel, or null when it cannot say. */
+  fetchCue?(have: string): Promise<{ tag: string; unchanged: boolean; pcmBase64: string } | null>;
+}`,
+  "the adapter can be asked for a cue",
+);
+
+await splice(
+  app("src/voice/voice-runtime.ts"),
+  `  const cuePcm16 = Uint8Array.from(Buffer.from(THINKING_TONE_NATIVE_PCM_BASE64, "base64"));
+  const cueSource = {
+    size: cuePcm16.byteLength,
+    type: "audio/pcm;rate=16000;bits=16",
+    async arrayBuffer() {
+      return cuePcm16.buffer.slice(cuePcm16.byteOffset, cuePcm16.byteOffset + cuePcm16.byteLength);
+    },
+  };`,
+  `  const cueBuiltIn = Uint8Array.from(Buffer.from(THINKING_TONE_NATIVE_PCM_BASE64, "base64"));
+  // paseo-voice: what is playing now, and the tag that says which track it is. Held
+  // across pauses so the audio crosses the relay once per change, not once per wait.
+  let cueBytes = cueBuiltIn;
+  let cueTag = "";
+  let cueAsking: Promise<void> | null = null;
+
+  function refreshCue(): Promise<void> {
+    const ask = getActiveSession()?.adapter.fetchCue;
+    if (!ask) {
+      return Promise.resolve();
+    }
+    // One question at a time: pauses come in bursts and the answer is megabytes.
+    cueAsking ??= Promise.resolve(ask(cueTag))
+      .then((answer) => {
+        if (!answer || answer.unchanged || !answer.pcmBase64) {
+          return;
+        }
+        cueBytes = Uint8Array.from(Buffer.from(answer.pcmBase64, "base64"));
+        cueTag = answer.tag;
+      })
+      .catch(() => {
+        // Keep playing whatever is already here. A cue is not worth a complaint.
+      })
+      .finally(() => {
+        cueAsking = null;
+      });
+    return cueAsking;
+  }
+
+  const cueSource = {
+    get size() {
+      return cueBytes.byteLength;
+    },
+    type: "audio/pcm;rate=16000;bits=16",
+    async arrayBuffer() {
+      await refreshCue();
+      return cueBytes.buffer.slice(cueBytes.byteOffset, cueBytes.byteOffset + cueBytes.byteLength);
+    },
+  };`,
+  "the cue is asked of the plugin, with the built-in one as fallback",
+);
+
+await splice(
+  app("src/contexts/session-context.tsx"),
+  `      setAssistantAudioPlaying: (isPlaying) => {
+        setIsPlayingAudio(serverId, isPlaying);
+      },`,
+  `      setAssistantAudioPlaying: (isPlaying) => {
+        setIsPlayingAudio(serverId, isPlaying);
+      },
+      // paseo-voice: the waiting music lives in the plugin's settings, and this is the
+      // only road to it from a phone. Null rather than a throw: the caller's fallback
+      // is the track built into the app, which is a better outcome than an error.
+      fetchCue: async (have: string) => {
+        if (!client) {
+          return null;
+        }
+        const answer = (await client.invokePluginRpc("voice", "voice.cue", { have })) as {
+          tag?: string;
+          unchanged?: boolean;
+          pcmBase64?: string;
+        } | null;
+        if (!answer?.tag) {
+          return null;
+        }
+        return { tag: answer.tag, unchanged: answer.unchanged === true, pcmBase64: answer.pcmBase64 ?? "" };
+      },`,
+  "the phone asks the plugin for the cue",
+);
+
 // 3. The test that pins the old tone's length, which would now fail the build.
 await splice(
   app("src/utils/thinking-tone.test.ts"),
