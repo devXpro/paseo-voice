@@ -1,15 +1,32 @@
-# paseo-voice
+<div align="center">
 
-Russian speech for [Paseo](https://getpaseo.com), through Google Cloud Text-to-Speech,
-with a local neural engine kept behind it for when there is no key or no network.
+<a href="https://paseo.sh">
+  <img src="https://github.com/getpaseo.png?size=160" width="80" alt="Paseo" />
+</a>
 
-A Paseo plugin: it picks the voice, meters the free allowance, replaces the waiting
-beep with music, and corrects three things in Paseo itself that cannot be reached any
-other way.
+# 🎙️ paseo-voice
 
-The settings panel is in Russian, deliberately — so is the audience.
+### Your agent, out loud and in Russian — with lounge music while it thinks
 
-## Why it exists
+Google Cloud Text-to-Speech for [Paseo](https://paseo.sh)'s voice mode, a local neural
+engine behind it for when there is no key or no network, and corrections for three
+things in Paseo that no setting reaches.
+
+[![Release](https://img.shields.io/github/v/release/devXpro/paseo-voice?style=flat-square&color=111111&labelColor=111111&label=release)](https://github.com/devXpro/paseo-voice/releases)
+[![Paseo](https://img.shields.io/badge/Paseo-%E2%89%A5%200.10-111111?style=flat-square&labelColor=111111)](https://paseo.sh)
+[![Licence](https://img.shields.io/github/license/devXpro/paseo-voice?style=flat-square&color=111111&labelColor=111111&label=licence)](LICENSE)
+[![Tests](https://img.shields.io/badge/tests-75%20passing-111111?style=flat-square&labelColor=111111)](docs/development.md)
+
+🇷🇺 **Real Russian voices** · 🎶 **Music instead of the beep** · 📊 **Spend metered live** · 🩹 **Three bugs fixed in Paseo itself**
+
+</div>
+
+---
+
+The settings panel is in Russian, deliberately — so is the audience. Everything else
+here, including these docs, is in English.
+
+## 🤔 Why it exists
 
 Paseo's voice mode defaults to a local English-only stack — Parakeet for recognition,
 Kokoro for speech — so speaking Russian to it produces silence. The only seam for a
@@ -21,7 +38,7 @@ things that matter for an assistant reading answers aloud: it has actual Russian
 speakers, and it synthesises four times faster than it speaks, so the gaps between
 sentences disappear.
 
-## Install
+## 📦 Install
 
 ```sh
 paseo plugin add devXpro/paseo-voice
@@ -39,32 +56,32 @@ restart the app afterwards. Getting a key, and what it costs, is in
 **macOS on Apple silicon** for the local fallback — upstream publishes
 `qwen_tts-macos-arm64` and nothing else. The Google path has no such limit.
 
-## What the panel does
+## 🎛️ What the panel does
 
 | Section | |
 |---|---|
-| **Голос** | Provider, billing family, voice — each with a play button. Tempo and delivery. [docs/voices.md](docs/voices.md) |
-| **Лимиты** | A bar per billing family: characters spent this month, hours of speech left, what any overspend cost. [docs/google.md](docs/google.md) |
-| **Звук ожидания** | What loops while the agent thinks: four shipped tracks, your own files, or silence. [docs/music.md](docs/music.md) |
-| **Патч Paseo** | Three corrections to Paseo's own code, each applied and reverted on its own. [docs/patches.md](docs/patches.md) |
-| **Локальный движок** | The fallback: binary, model, state. [docs/local-engine.md](docs/local-engine.md) |
-| **Речь агента** | The two daemon settings voice mode cannot work without. [docs/patches.md](docs/patches.md#the-two-daemon-settings) |
-| **Диктовка** | Reports whether the Whisper model is where `paseo-whisper` looks for it. |
-| **Подключение** | Points `~/.paseo/config.json` at this plugin's proxy. |
+| 🎙️ **Голос** | Provider, billing family, voice — each with a play button. Tempo and delivery. [docs/voices.md](docs/voices.md) |
+| 📊 **Лимиты** | A bar per billing family: characters spent this month, hours of speech left, what any overspend cost. [docs/google.md](docs/google.md) |
+| 🎶 **Звук ожидания** | What loops while the agent thinks: four shipped tracks, your own files, or silence. [docs/music.md](docs/music.md) |
+| 🩹 **Патч Paseo** | Three corrections to Paseo's own code, each applied and reverted on its own. [docs/patches.md](docs/patches.md) |
+| 🖥️ **Локальный движок** | The fallback: binary, model, state. [docs/local-engine.md](docs/local-engine.md) |
+| ⚙️ **Речь агента** | The two daemon settings voice mode cannot work without. [docs/patches.md](docs/patches.md#the-two-daemon-settings) |
+| ⌨️ **Диктовка** | Reports whether the Whisper model is where `paseo-whisper` looks for it. |
+| 🔗 **Подключение** | Points `~/.paseo/config.json` at this plugin's proxy. |
 
-## Documentation
+## 📚 Documentation
 
-- [docs/google.md](docs/google.md) — the key, billing, families, free allowances, real costs
-- [docs/voices.md](docs/voices.md) — choosing a voice, tempo, flat delivery, stress, the phone filter
-- [docs/music.md](docs/music.md) — the waiting cue, your own tracks, licensing
-- [docs/patches.md](docs/patches.md) — what is changed inside Paseo, why, and how to undo it
-- [docs/ios.md](docs/ios.md) — building Paseo's iOS app with the cue in it
-- [docs/local-engine.md](docs/local-engine.md) — the Qwen3-TTS fallback
-- [docs/architecture.md](docs/architecture.md) — how the pieces fit, and where files live
-- [docs/development.md](docs/development.md) — tests, typecheck, conventions
-- [docs/troubleshooting.md](docs/troubleshooting.md) — failure modes, each one met in practice
+- 💳 [docs/google.md](docs/google.md) — the key, billing, families, free allowances, real costs
+- 🎙️ [docs/voices.md](docs/voices.md) — choosing a voice, tempo, flat delivery, stress, the phone filter
+- 🎶 [docs/music.md](docs/music.md) — the waiting cue, your own tracks, licensing
+- 🩹 [docs/patches.md](docs/patches.md) — what is changed inside Paseo, why, and how to undo it
+- 📱 [docs/ios.md](docs/ios.md) — building Paseo's iOS app with the cue in it
+- 🖥️ [docs/local-engine.md](docs/local-engine.md) — the Qwen3-TTS fallback
+- 🧩 [docs/architecture.md](docs/architecture.md) — how the pieces fit, and where files live
+- 🛠️ [docs/development.md](docs/development.md) — tests, typecheck, conventions
+- 🚑 [docs/troubleshooting.md](docs/troubleshooting.md) — failure modes, each one met in practice
 
-## Three things that were measured, not assumed
+## 🔬 Three things that were measured, not assumed
 
 **Russian `Standard` and `Wavenet` are the same voices.** `ru-RU-Standard-A` and
 `ru-RU-Wavenet-A` return byte-identical audio. Same price per million, but Standard
@@ -81,14 +98,14 @@ sentence came out as a different performance — average pitch wandered 26 Hz ac
 sentences of one answer. Pinning the seed halves that; `top_k: 1` removes sampling
 altogether.
 
-## Not for sale
+## 🎁 Not for sale
 
 A personal hobby project, given away for free. No payment is asked for it, no donations
 are accepted, no service is offered around it, and it is not connected to the author's
 employer. Use it, fork it, sell your fork if you like — the licence allows it. The
 author's own involvement is unpaid and stays that way.
 
-## Licence
+## ⚖️ Licence
 
 [MIT](LICENSE).
 
