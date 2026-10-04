@@ -262,7 +262,19 @@ export const fetchCue = defineRpc({
 /** Renders one cue so it can be auditioned before a build is spent on it. */
 export const previewCue = defineRpc({
   name: "voice.preview-cue",
-  input: z.object({ cue: z.string().min(1) }),
+  input: z.object({
+    cue: z.string().min(1),
+    /**
+     * How much of the track to send, or 0 for all of it.
+     *
+     * The desktop asks for the whole thing: it fetches over loopback and the size
+     * costs nothing. A phone asks for twenty seconds, because its copy crosses a
+     * relay — a four-minute track is nine megabytes, and nobody needs four minutes to
+     * decide whether they like it. Compressing instead is not open: the phone's
+     * engine takes raw samples and a plugin has no decoder to offer it.
+     */
+    capSeconds: z.number().nonnegative().default(0),
+  }),
   output: z.object({ wavBase64: z.string(), seconds: z.number().nonnegative(), error: z.string().default("") }),
 });
 

@@ -245,6 +245,50 @@ await splice(
   "the now-unused duration import",
 );
 
+/**
+ * 6. The audio engine, lent to plugin surfaces.
+ *
+ * A plugin has no way to make a sound. The host gives client bundles react,
+ * react-native, zod and react-query, and the plugin API itself offers `copyText` and
+ * nothing else of the device — so the audition buttons in this plugin's panel say, on
+ * a phone, that there is nothing here to play with. On a desktop they work, because
+ * that surface is a browser and a browser has `Audio`.
+ *
+ * But the app has an engine, the one playing the waiting music and the agent's voice,
+ * and plugin bundles are evaluated in this same JavaScript world. So it can simply be
+ * handed over. It even reads the sample rate off the source's type and resamples
+ * itself, so speech at 24 kHz needs no conversion on the way in.
+ *
+ * Two edits: the provider publishes the engine it already made, and the module table
+ * passes it on. Nothing new is declared external — it rides the react-native module
+ * the plugin already imports, so the daemon's bundler needs no changes and an
+ * unpatched app simply does not have the field. The panel tests for it and keeps
+ * quiet when it is missing, which is what the App Store build will do.
+ */
+await splice(
+  app("src/contexts/voice-context.tsx"),
+  `    engineRef.current = engine;`,
+  `    // paseo-voice: lent to plugin surfaces, which have no sound of their own.
+    (globalThis as { __paseoVoiceEngine?: unknown }).__paseoVoiceEngine = engine;
+    engineRef.current = engine;`,
+  "the audio engine is published",
+);
+
+await splice(
+  app("src/plugins/evaluate.ts"),
+  `    if (name === "@getpaseo/plugin/client/react-native") {
+      return pluginReactNativeRuntime;
+    }`,
+  `    if (name === "@getpaseo/plugin/client/react-native") {
+      // paseo-voice: a plugin cannot otherwise make a sound on a phone. Added to this
+      // module rather than a new one so nothing has to become external in the
+      // daemon's bundler; a plugin feature-tests the field and does without it.
+      const engine = (globalThis as { __paseoVoiceEngine?: unknown }).__paseoVoiceEngine;
+      return engine ? { ...pluginReactNativeRuntime, audioEngine: engine } : pluginReactNativeRuntime;
+    }`,
+  "plugins can reach the audio engine",
+);
+
 // 3. The test that pins the old tone's length, which would now fail the build.
 await splice(
   app("src/utils/thinking-tone.test.ts"),

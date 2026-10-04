@@ -188,7 +188,7 @@ export default function contribute(server: PluginServerContext) {
   server.handle(previewCue, async (input) => {
     try {
       const at = await controller.choice();
-      const track = await renderCue(input.cue, at.cueVolume);
+      const track = await renderCue(input.cue, at.cueVolume, input.capSeconds);
       return {
         wavBase64: wavOf(track.pcm, track.rate).toString("base64"),
         seconds: track.durationMs / 1000,
