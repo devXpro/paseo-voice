@@ -136,7 +136,10 @@ export function createProxy(options: ProxyOptions): Proxy {
     if (tier) {
       // Recorded on the way out, not awaited: the bar on the screen must not be in the
       // path of somebody waiting to hear a sentence.
-      void record(tier, text.length).catch((failure: unknown) => log(`voice: usage: ${String(failure)}`));
+      // Code points, not UTF-16 units: Google bills one character per character
+      // whatever it costs in bytes, so Cyrillic counts the same as Latin — but an
+      // emoji is one character to them and two to `.length`.
+      void record(tier, [...text].length).catch((failure: unknown) => log(`voice: usage: ${String(failure)}`));
     }
     return pcm;
   }

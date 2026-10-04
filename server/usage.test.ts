@@ -59,3 +59,19 @@ test("the ledger is kept where the rest of the plugin's state lives", async () =
   const raw = JSON.parse(await readFile(paths.usage, "utf8")) as Record<string, Record<string, number>>;
   assert.equal(raw[monthOf()]?.["chirp3-hd"], 1_500_000);
 });
+
+/**
+ * Google bills per character, not per byte — a multi-byte script costs the same as
+ * Latin. So the thing to get right is which "character" is meant: `.length` counts
+ * UTF-16 units, and anything outside the basic plane takes two of those while Google
+ * charges for one.
+ */
+test("Cyrillic costs what it looks like, and an emoji is one character not two", () => {
+  const russian = "Проверка связи";
+  assert.equal([...russian].length, 14, "кириллица — по одному символу, не по байтам");
+  assert.equal([...russian].length, russian.length, "в основной плоскости расхождения нет");
+
+  const withEmoji = "Готово 👍";
+  assert.equal(withEmoji.length, 9, "UTF-16 насчитает лишний");
+  assert.equal([...withEmoji].length, 8, "а Google берёт как за восемь");
+});
