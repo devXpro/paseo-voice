@@ -60,7 +60,7 @@ documentation that cannot go stale without going red.
 
 ## What the tests cover
 
-75 of them, all `node:test`, no framework and no mocking library.
+79 of them, all `node:test`, no framework and no mocking library.
 
 The ones worth knowing about:
 

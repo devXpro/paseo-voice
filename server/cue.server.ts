@@ -2,7 +2,7 @@ import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdir, readdir, readFile, rename, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { ATTRIBUTION, BUILTIN, builtinOf } from "./catalogue.server.ts";
+import { ATTRIBUTION, type Builtin, BUILTIN, builtinOf } from "./catalogue.server.ts";
 import { type Track } from "./music.server.ts";
 import { paths } from "./paths.server.ts";
 
@@ -84,6 +84,42 @@ export async function list(): Promise<Cue[]> {
 const sourceOf = (id: string) => path.join(paths.musicDir, ".builtin", `${id}.mp3`);
 
 /**
+ * Downloads one shipped track and checks it, giving up only after several goes.
+ *
+ * Retried because this is eight megabytes over somebody's home connection, and one
+ * dropped fetch used to leave a track marked as not downloaded until the plugin next
+ * happened to restart. A wrong hash is retried for the same reason rather than refused
+ * at once: a truncated body fails the hash too, and that is exactly the case worth
+ * another go. If the bytes upstream really did change, three attempts cost a few
+ * seconds and the refusal still stands.
+ */
+const ATTEMPTS = 3;
+
+export async function fetchBuiltin(entry: Builtin, backoffMs = 1_000): Promise<Buffer> {
+  let last = "";
+  for (let attempt = 1; attempt <= ATTEMPTS; attempt += 1) {
+    try {
+      const response = await fetch(entry.url, { signal: AbortSignal.timeout(120_000) });
+      if (!response.ok) {
+        throw new Error(`${response.status}`);
+      }
+      const bytes = Buffer.from(await response.arrayBuffer());
+      const got = createHash("sha256").update(bytes).digest("hex");
+      if (got !== entry.sha256) {
+        throw new Error(`контрольная сумма не сошлась на ${bytes.length} байтах`);
+      }
+      return bytes;
+    } catch (failure) {
+      last = failure instanceof Error ? failure.message : String(failure);
+      if (attempt < ATTEMPTS) {
+        await new Promise((wake) => setTimeout(wake, attempt * backoffMs));
+      }
+    }
+  }
+  throw new Error(`${entry.title}: не скачалось за ${ATTEMPTS} попытки — ${last}`);
+}
+
+/**
  * Fetches a shipped track if it is not here yet, and refuses anything whose bytes do
  * not hash to what the catalogue says: a cue is audio this plugin hands to the client,
  * and a silent swap upstream should not become a silent swap here.
@@ -101,15 +137,7 @@ async function ensureBuiltin(id: string): Promise<string> {
     // Not fetched yet.
   }
 
-  const response = await fetch(entry.url, { signal: AbortSignal.timeout(120_000) });
-  if (!response.ok) {
-    throw new Error(`не скачалось: ${response.status}`);
-  }
-  const bytes = Buffer.from(await response.arrayBuffer());
-  const got = createHash("sha256").update(bytes).digest("hex");
-  if (got !== entry.sha256) {
-    throw new Error(`контрольная сумма ${entry.title} не сошлась`);
-  }
+  const bytes = await fetchBuiltin(entry);
   await mkdir(path.dirname(target), { recursive: true });
   // Staged and renamed, so an interrupted download never looks like a finished one.
   await writeFile(`${target}.partial`, bytes);
@@ -226,14 +254,22 @@ async function build(id: string, volume: number, capSeconds: number): Promise<Tr
  *
  * Without this the first fetch happens when the cue is first asked for — which is the
  * moment it should already be playing, so the first silence of a session would be
- * silent indeed. Failures are swallowed: with no network the patched client falls back
- * to Paseo's own tone, which is the right outcome and not worth an error anybody sees.
+ * silent indeed.
+ *
+ * A failure is not raised to the surface: with no network the patched client falls
+ * back to Paseo's own tone, which is the right outcome and not worth an error card.
+ * It is written to the log, though. Swallowing it whole is how a track once sat marked
+ * as not downloaded with no reason recorded anywhere at all.
  */
-export async function warmUp(id: string): Promise<void> {
+export async function warmUp(id: string, log: (line: string) => void = () => {}): Promise<void> {
   if (!builtinOf(id)) {
     return;
   }
-  await ensureBuiltin(id).catch(() => {});
+  try {
+    await ensureBuiltin(id);
+  } catch (failure) {
+    log(`voice: ${failure instanceof Error ? failure.message : String(failure)}`);
+  }
 }
 
 /** Makes the folder and says where it is, so the surface can tell somebody. */

@@ -37,6 +37,13 @@ place for audio that never changes. They are downloaded when the plugin first st
 each checked against a SHA-256 in `server/catalogue.server.ts` before use, and written
 through a staged rename so a broken download cannot leave half a file behind.
 
+A download that fails is tried three times, with a second more of waiting each time —
+eight megabytes over a home connection drops often enough to matter, and a track that
+failed once used to stay marked as not downloaded until the plugin next restarted. A
+wrong hash is retried too: a truncated body fails the hash, and that is the case most
+worth another go. If all three fail, the reason goes to the daemon log and the client
+falls back to Paseo's own tone rather than to silence.
+
 The download happens on plugin start rather than on first play — by the time the sound
 is wanted it is too late, and the first pause of a session would be the one without
 music in it.

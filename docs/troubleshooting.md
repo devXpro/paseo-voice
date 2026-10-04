@@ -91,6 +91,18 @@ The app was built before the cue cap was raised. Run `ios-build/build.sh` again;
 On the desktop there is no cap, and a change of track or volume takes effect on the
 next repeat with no rebuild at all.
 
+## A shipped track stays marked «скачать» and will not play
+
+Its download failed. Press ▶ on it — that fetches it too — or reload the plugin, which
+fetches whatever is currently chosen.
+
+The reason is in the daemon log; it is deliberately not raised as an error card,
+because with no network the right outcome is Paseo's own tone rather than a complaint:
+
+```sh
+grep -a '"pluginId":"voice"' ~/.paseo/daemon.log | grep -i 'не скачалось'
+```
+
 ## A track plays at the wrong volume after I change it
 
 On the desktop it should not: the volume is read on every repeat. On the phone the

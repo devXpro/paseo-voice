@@ -52,7 +52,7 @@ export default function contribute(server: PluginServerContext) {
         current = next;
         // Fetched here rather than when the sound is wanted: by then it is too late,
         // and the first pause of a session would be the one with no music in it.
-        return warmUpCue(next.cue);
+        return warmUpCue(next.cue, log);
       })
       .catch((failure: unknown) => log(`voice: could not read the choice: ${String(failure)}`));
   refreshChoice();
