@@ -247,7 +247,9 @@ export function VoiceSurface({ theme, layout }: PluginSurfaceProps) {
    * silently refuse, which is what used to push the old build out to a system player.
    */
   function listen(voice?: string) {
-    if (!AUDIO) {
+    // Both surfaces, or neither. Checking only the browser here while the button was
+    // shown for either is what made a patched phone offer a play it then refused.
+    if (!AUDIO && !NATIVE) {
       toast.error("Это приложение не даёт плагину проигрывать звук");
       return;
     }
@@ -335,7 +337,9 @@ export function VoiceSurface({ theme, layout }: PluginSurfaceProps) {
 
   /** The same gesture-unlock dance as the voices, against the cue renderer. */
   function playCue(cue: string) {
-    if (!AUDIO) {
+    // Both surfaces, or neither. Checking only the browser here while the button was
+    // shown for either is what made a patched phone offer a play it then refused.
+    if (!AUDIO && !NATIVE) {
       toast.error("Это приложение не даёт плагину проигрывать звук");
       return;
     }
