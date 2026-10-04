@@ -51,8 +51,9 @@ export async function isWired(port: number): Promise<boolean> {
  * engine that somebody tuned — a local Whisper with its own term list, say — and
  * "I want a voice for conversations" is not a request to redo transcription too.
  */
-export async function wire(port: number, language: string): Promise<void> {
+export async function wire(port: number, language: string): Promise<boolean> {
   const config = await read();
+  const before = JSON.stringify(config);
 
   const providers = object(config.providers);
   const openai = object(providers.openai);
@@ -81,10 +82,24 @@ export async function wire(port: number, language: string): Promise<void> {
   features.voiceMode = voiceMode;
   config.features = features;
 
+  /**
+   * Nothing is written when nothing would change.
+   *
+   * The desktop app watches this file and restarts the daemon whenever it is touched
+   * — which drops every connected phone, breaks the agent's MCP transport, and once
+   * took the port out from under this plugin's own proxy mid-sentence. Pressing a
+   * button that was already pressed should not cost all that, and it did: the button
+   * rewrote an identical file every time.
+   */
+  if (JSON.stringify(config) === before) {
+    return false;
+  }
+
   // Written beside the original and renamed over it: a daemon reading a half-written
   // config at the wrong moment would lose every plugin registration in it.
   const target = configPath();
   const staged = `${target}.voice-plugin.tmp`;
   await writeFile(staged, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });
   await rename(staged, target);
+  return true;
 }

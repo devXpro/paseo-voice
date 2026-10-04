@@ -343,7 +343,12 @@ export function createController(options: {
 
     async applyToPaseo() {
       const stored = await resolved();
-      await wire(stored.port, stored.language === "russian" ? "ru" : "en");
+      const changed = await wire(stored.port, stored.language === "russian" ? "ru" : "en");
+      if (!changed) {
+        log("voice: already wired, config left alone");
+        return snapshot(stored);
+      }
+      // Only now: a restart is what writing costs, and nothing was written.
       restartRequired = true;
       log(`voice: wired Paseo voice mode to 127.0.0.1:${stored.port}`);
       return snapshot(stored);

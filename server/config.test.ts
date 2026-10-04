@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
@@ -95,4 +95,29 @@ test("isWired only agrees when the port is the one in the config", async () => {
   await wire(8123, "ru");
   assert.equal(await isWired(8123), true);
   assert.equal(await isWired(9999), false);
+});
+
+/**
+ * Writing this file is not free: the desktop app watches it and restarts the daemon,
+ * which drops connected phones, breaks the agent's MCP transport, and once took the
+ * port out from under this plugin's own proxy mid-sentence. Pressing a button that
+ * was already pressed used to cost all of that.
+ */
+test("wiring twice writes once", async () => {
+  const home = await withHome({});
+  const { wire } = await import("./config.server.ts");
+
+  assert.equal(await wire(8123, "ru"), true, "в первый раз есть что записать");
+  const after = await stat(path.join(home, "config.json"));
+
+  assert.equal(await wire(8123, "ru"), false, "во второй — нечего");
+  const again = await stat(path.join(home, "config.json"));
+  assert.equal(again.mtimeMs, after.mtimeMs, "файл не тронут, демон не перезапущен");
+});
+
+test("a real change is still written", async () => {
+  await withHome({});
+  const { wire } = await import("./config.server.ts");
+  assert.equal(await wire(8123, "ru"), true);
+  assert.equal(await wire(9000, "ru"), true, "другой порт — другая запись");
 });
