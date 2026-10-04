@@ -120,7 +120,7 @@ export const SECTIONS: Section[] = [
                 title={`Голос · ${inFamily.length}`}
                 footer={
                   act.canPlay
-                    ? "Кнопка справа проигрывает голос прямо здесь."
+                    ? "Кнопка справа проигрывает голос прямо здесь, повторное нажатие обрывает."
                     : "Прослушать можно только с компьютера: в мобильном приложении плагину нечем играть звук."
                 }
               >
@@ -131,7 +131,7 @@ export const SECTIONS: Section[] = [
                     name={short(voice.name)}
                     detail={voice.gender === "female" ? "ж" : "м"}
                     selected={voice.name === data.cloudVoice}
-                    playing={act.listeningTo === voice.name}
+                    playing={act.listeningTo === voice.name ? act.listeningState : ""}
                     canPlay={act.canPlay}
                     onSelect={() => act.chooseCloudVoice(voice.name)}
                     onPlay={() => act.listen(voice.name)}
@@ -151,7 +151,7 @@ export const SECTIONS: Section[] = [
                     theme={theme}
                     name={name}
                     selected={name === data.localVoice}
-                    playing={act.listeningTo === name}
+                    playing={act.listeningTo === name ? act.listeningState : ""}
                     canPlay={act.canPlay}
                     onSelect={() => act.chooseLocalVoice(name)}
                     onPlay={() => act.listen(name)}
@@ -302,7 +302,7 @@ export const SECTIONS: Section[] = [
             title="Что играет, пока агент думает"
             footer={
               (act.canPlay
-                ? "Кнопка справа проигрывает прямо здесь — выбирать вслепую не надо. "
+                ? "Кнопка справа проигрывает прямо здесь, повторное нажатие обрывает. "
                 : "Послушать можно только с компьютера: в мобильном приложении плагину нечем играть звук. ") +
               "Встроенные качаются при первом обращении и проверяются по контрольной сумме. " +
               "Музыка — Kevin MacLeod, лицензия CC BY 4.0."
@@ -315,7 +315,7 @@ export const SECTIONS: Section[] = [
                 name={entry.title}
                 detail={entry.kind === "own" ? "свой" : entry.kind === "silence" ? "тишина" : entry.seconds === 0 ? "скачать" : undefined}
                 selected={entry.id === data.cue}
-                playing={act.listeningTo === entry.id}
+                playing={act.listeningTo === entry.id ? act.listeningState : ""}
                 canPlay={act.canPlay && entry.kind !== "silence"}
                 onSelect={() => act.chooseCue(entry.id)}
                 onPlay={() => act.playCue(entry.id)}

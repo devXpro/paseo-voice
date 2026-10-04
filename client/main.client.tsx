@@ -84,7 +84,26 @@ export function VoiceSurface({ theme, layout }: PluginSurfaceProps) {
   // with a back button. On a wide screen it is which pane is selected, and never null.
   const [open, setOpen] = useState<SectionId | null>(null);
   const [listeningTo, setListeningTo] = useState("");
+  const [listeningState, setListeningState] = useState<"" | "loading" | "playing">("");
   const player = useRef<HTMLAudioElement | null>(null);
+  // Bumped on every start and on every stop. A reply from a round trip that is no
+  // longer the current one has to be dropped, or an audition somebody cancelled comes
+  // back to life a second later when its bytes arrive.
+  const token = useRef(0);
+
+  /** Silences whatever is playing and forgets it. Safe to call when nothing is. */
+  function hush(): void {
+    token.current += 1;
+    const element = player.current;
+    if (element) {
+      element.pause();
+      // Freeing the data URL as well: these are megabytes and the element keeps them.
+      element.removeAttribute("src");
+      element.load();
+    }
+    setListeningTo("");
+    setListeningState("");
+  }
 
   const { data, isLoading } = useQuery({
     queryKey: QUERY_KEY,
@@ -138,25 +157,62 @@ export function VoiceSurface({ theme, layout }: PluginSurfaceProps) {
       return;
     }
     const target = voice ?? (data?.provider === "google" ? data.cloudVoice : data?.localVoice) ?? "";
-    if (listeningTo) {
+    // Pressing the row that is already sounding means stop; pressing another one means
+    // swap, which is the same stop followed by a start.
+    const wasThis = listeningTo === (target || "…");
+    hush();
+    if (wasThis) {
       return;
     }
+    const mine = token.current;
     const element = (player.current ??= new AUDIO());
     element.src = `data:audio/wav;base64,${SILENCE}`;
     void element.play().catch(() => {});
 
     setListeningTo(target || "…");
+    setListeningState("loading");
     void probe({ text: PROBE, ...(voice ? { voice } : {}) })
       .then((result) => {
-        if (result.error || !result.wavBase64) {
-          toast.error(result.error || "Синтез ничего не вернул");
+        if (token.current !== mine) {
           return;
         }
-        element.src = `data:audio/wav;base64,${result.wavBase64}`;
-        return element.play();
+        if (result.error || !result.wavBase64) {
+          toast.error(result.error || "Синтез ничего не вернул");
+          hush();
+          return;
+        }
+        return start(element, result.wavBase64, mine);
       })
-      .catch((error: unknown) => toast.error(String(error)))
-      .finally(() => setListeningTo(""));
+      .catch((error: unknown) => {
+        if (token.current === mine) {
+          toast.error(String(error));
+          hush();
+        }
+      });
+  }
+
+  /**
+   * Plays the bytes and holds the row lit until they actually finish.
+   *
+   * `play()` settles when playback *begins*, so clearing the state from its `finally`
+   * — which is what this used to do — put the row back to a resting arrow a moment
+   * after the sound started, with minutes of audio still to come and no way to stop
+   * it. The end is `ended`, and nothing else.
+   */
+  function start(element: HTMLAudioElement, wavBase64: string, mine: number): Promise<void> {
+    element.onended = () => {
+      if (token.current === mine) {
+        hush();
+      }
+    };
+    element.src = `data:audio/wav;base64,${wavBase64}`;
+    setListeningState("playing");
+    return element.play().catch((error: unknown) => {
+      if (token.current === mine) {
+        toast.error(String(error));
+        hush();
+      }
+    });
   }
 
   /** The same gesture-unlock dance as the voices, against the cue renderer. */
@@ -165,25 +221,36 @@ export function VoiceSurface({ theme, layout }: PluginSurfaceProps) {
       toast.error("В мобильном приложении плагину нечем проиграть звук");
       return;
     }
-    if (listeningTo) {
+    const wasThis = listeningTo === cue;
+    hush();
+    if (wasThis) {
       return;
     }
+    const mine = token.current;
     const element = (player.current ??= new AUDIO());
     element.src = `data:audio/wav;base64,${SILENCE}`;
     void element.play().catch(() => {});
 
     setListeningTo(cue);
+    setListeningState("loading");
     void cuePreviewRpc({ cue })
       .then((result) => {
-        if (result.error || !result.wavBase64) {
-          toast.error(result.error || "Нечего проигрывать");
+        if (token.current !== mine) {
           return;
         }
-        element.src = `data:audio/wav;base64,${result.wavBase64}`;
-        return element.play();
+        if (result.error || !result.wavBase64) {
+          toast.error(result.error || "Нечего проигрывать");
+          hush();
+          return;
+        }
+        return start(element, result.wavBase64, mine);
       })
-      .catch((error: unknown) => toast.error(String(error)))
-      .finally(() => setListeningTo(""));
+      .catch((error: unknown) => {
+        if (token.current === mine) {
+          toast.error(String(error));
+          hush();
+        }
+      });
   }
 
   if (isLoading || !data) {
@@ -225,6 +292,7 @@ export function VoiceSurface({ theme, layout }: PluginSurfaceProps) {
       applying: applying.isPending,
       listen,
       listeningTo,
+      listeningState,
       canPlay: AUDIO !== undefined,
       enableSpeech: () => switching.mutate(false),
       disableSpeech: () => switching.mutate(true),

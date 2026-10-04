@@ -46,8 +46,10 @@ export type Lab = {
     applying: boolean;
     /** Auditions one voice. `undefined` means whichever is currently chosen. */
     listen(voice?: string): void;
-    /** The voice being rendered right now, so only its own row shows a spinner. */
+    /** What is being auditioned, so only its own row shows a spinner or a stop. */
     listeningTo: string;
+    /** Whether that one is still being made or is already audible. */
+    listeningState: "" | "loading" | "playing";
     /** False on a phone: React Native has no audio, and neither does the plugin API. */
     canPlay: boolean;
     enableSpeech(): void;
@@ -438,7 +440,8 @@ export function VoiceRow({
   name: string;
   detail?: string;
   selected: boolean;
-  playing: boolean;
+  /** "loading" while the bytes are being made, "playing" while they are audible. */
+  playing: "" | "loading" | "playing";
   canPlay: boolean;
   onSelect(): void;
   onPlay(): void;
@@ -477,17 +480,20 @@ export function VoiceRow({
         </View>
       </Pressable>
       {canPlay ? (
+        /* A toggle, not a one-way trip. Tracks here run for minutes, and the button
+           used to disable itself for the whole of it — nothing on the screen could
+           stop a sound somebody had started by accident. */
         <Pressable
           onPress={onPlay}
-          disabled={playing}
           style={({ pressed }) => ({
             paddingVertical: 13,
             paddingHorizontal: 14,
-            opacity: playing ? 0.5 : 1,
             backgroundColor: pressed ? theme.colors.surface2 : "transparent",
           })}
         >
-          <Text style={{ color: theme.colors.accent, fontSize: 14 }}>{playing ? "…" : "▶"}</Text>
+          <Text style={{ color: theme.colors.accent, fontSize: 14 }}>
+            {playing === "loading" ? "…" : playing === "playing" ? "■" : "▶"}
+          </Text>
         </Pressable>
       ) : null}
     </View>
