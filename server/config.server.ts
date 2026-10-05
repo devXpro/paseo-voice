@@ -51,7 +51,12 @@ export async function isDictationWired(port: number): Promise<boolean> {
  * restarts the daemon on every touch, which drops phones and breaks the agent's MCP
  * transport. Returns whether anything was actually written.
  */
-export async function wireDictation(port: number, on: boolean, model: string): Promise<boolean> {
+export async function wireDictation(
+  port: number,
+  on: boolean,
+  model: string,
+  language: string,
+): Promise<boolean> {
   const config = await read();
   const before = JSON.stringify(config);
 
@@ -67,7 +72,12 @@ export async function wireDictation(port: number, on: boolean, model: string): P
       apiKey: "local",
       baseUrl: `http://127.0.0.1:${port}/v1`,
     };
-    dictation.stt = { ...object(dictation.stt), provider: "openai", model };
+    // The language matters more than it looks. Without it Paseo sends its own default,
+    // which is English, and the engine transcribes Russian as though it were English —
+    // which is the exact failure this whole feature exists to remove. `enabled` is the
+    // other half: the feature can be pointed here and still be switched off.
+    dictation.stt = { ...object(dictation.stt), provider: "openai", model, language };
+    dictation.enabled = true;
   } else {
     // Back to what Paseo ships with, rather than leaving it pointed at a dead port.
     dictation.stt = { ...object(dictation.stt), provider: "local", model: VOICE_STT_MODEL };

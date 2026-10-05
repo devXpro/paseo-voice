@@ -460,7 +460,7 @@ export function createController(options: {
       } else {
         recogniser.stop();
       }
-      const changed = await writeDictation(stored.port, on, stored.dictationModel);
+      const changed = await writeDictation(stored.port, on, stored.dictationModel, stored.language === "russian" ? "ru" : "en");
       if (changed) {
         restartRequired = true;
         log(`voice: dictation ${on ? "wired to" : "returned from"} 127.0.0.1:${stored.port}`);

@@ -121,3 +121,41 @@ test("a real change is still written", async () => {
   assert.equal(await wire(8123, "ru"), true);
   assert.equal(await wire(9000, "ru"), true, "другой порт — другая запись");
 });
+
+/**
+ * The language is the whole point and the easiest thing to leave out.
+ *
+ * Without it Paseo sends its own default — English — and the engine transcribes
+ * Russian as though it were English, which is the exact failure this plugin's
+ * dictation exists to remove. It shipped missing once, and only went unnoticed on the
+ * machine where a previous tool had already written it.
+ */
+test("wiring dictation says which language is being spoken", async () => {
+  const home = await withHome({});
+  const { wireDictation } = await import("./config.server.ts");
+
+  await wireDictation(8123, true, "large-v3-turbo", "ru");
+  const stt = (await readConfig(home)).features.dictation.stt;
+  assert.equal(stt.provider, "openai");
+  assert.equal(stt.language, "ru", "без языка движок слышит английский");
+  assert.equal((await readConfig(home)).features.dictation.enabled, true);
+});
+
+test("unwiring gives Paseo its own recogniser back", async () => {
+  const home = await withHome({});
+  const { wireDictation } = await import("./config.server.ts");
+  await wireDictation(8123, true, "large-v3-turbo", "ru");
+  await wireDictation(8123, false, "large-v3-turbo", "ru");
+
+  const stt = (await readConfig(home)).features.dictation.stt;
+  assert.equal(stt.provider, "local", "иначе диктовка указывает на мёртвый порт");
+});
+
+test("wiring dictation twice writes once", async () => {
+  const home = await withHome({});
+  const { wireDictation } = await import("./config.server.ts");
+  assert.equal(await wireDictation(8123, true, "large-v3-turbo", "ru"), true);
+  const after = await stat(path.join(home, "config.json"));
+  assert.equal(await wireDictation(8123, true, "large-v3-turbo", "ru"), false);
+  assert.equal((await stat(path.join(home, "config.json"))).mtimeMs, after.mtimeMs);
+});
