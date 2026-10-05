@@ -19,6 +19,8 @@ export type Choice = {
   cueVolume: number;
   /** Low-pass before sending, so the phone's resampler has nothing to alias. */
   phoneSafe: boolean;
+  /** Words the recogniser should expect, put where Paseo's own instruction was. */
+  dictionary?: string;
   googleKey: string;
   pronunciations: Pronunciation[];
 };
@@ -144,6 +146,72 @@ export function createProxy(options: ProxyOptions): Proxy {
       void record(tier, [...text].length).catch((failure: unknown) => log(`voice: usage: ${String(failure)}`));
     }
     return pcm;
+  }
+
+  /**
+   * Dictation, rewritten on its way to the engine.
+   *
+   * Paseo attaches an instruction to every chunk — "Transcribe only what the speaker
+   * says. Do not add words." — which is written for `gpt-4o-transcribe`, a model that
+   * follows instructions. Whisper is not that: it reads the prompt as the transcript
+   * so far and continues in its language. So an English instruction makes it answer
+   * in English, `language=ru` or not. Long dictation is cut into fifteen-second
+   * chunks and each one carries the instruction, which is why some chunks came back
+   * Russian and some English in the same sentence.
+   *
+   * The instruction is therefore dropped and this plugin's own vocabulary put in its
+   * place, which is what a Whisper prompt is actually for. The language is forced from
+   * the plugin's settings too, so it no longer depends on Paseo's config being right.
+   *
+   * This reads the whole body rather than piping it, which is affordable here: a chunk
+   * is a few seconds of audio.
+   */
+  async function handleDictation(
+    request: import("node:http").IncomingMessage,
+    response: import("node:http").ServerResponse,
+  ): Promise<void> {
+    const at = recogniser?.();
+    if (!at?.running) {
+      refuse(response, 503, "движок распознавания не запущен");
+      return;
+    }
+
+    const chunks: Buffer[] = [];
+    for await (const chunk of request) {
+      chunks.push(chunk as Buffer);
+    }
+    const incoming = new Request("http://local/", {
+      method: "POST",
+      headers: { "content-type": request.headers["content-type"] ?? "" },
+      body: Buffer.concat(chunks),
+      duplex: "half",
+    } as RequestInit);
+
+    // Typed by hand for the same reason as the cast below: without the DOM library the
+    // ambient `FormData` here is the wrong one, and it is this object at runtime.
+    const form = (await incoming.formData()) as unknown as {
+      delete(name: string): void;
+      set(name: string, value: string): void;
+    };
+    form.delete("prompt");
+    const at2 = choice();
+    if (at2.dictionary?.trim()) {
+      form.set("prompt", at2.dictionary.trim());
+    }
+    form.set("language", at2.language === "russian" ? "ru" : "en");
+
+    // Cast because this project compiles without the DOM library, where `FormData` and
+    // `fetch`'s body type come from different declarations of the same runtime object.
+    const reply = await fetch(`http://127.0.0.1:${at.port}/inference`, {
+      method: "POST",
+      body: form as unknown as BodyInit,
+    });
+    const body = Buffer.from(await reply.arrayBuffer());
+    response.writeHead(reply.status, {
+      "content-type": reply.headers.get("content-type") ?? "application/json",
+      "content-length": String(body.length),
+    });
+    response.end(body);
   }
 
   async function handleSpeak(
@@ -315,37 +383,10 @@ export function createProxy(options: ProxyOptions): Proxy {
            * bytes would add latency to every dictated sentence for nothing.
            */
           if (request.method === "POST" && url.startsWith("/v1/audio/transcriptions")) {
-            const at = recogniser?.();
-            if (!at?.running) {
-              refuse(response, 503, "движок распознавания не запущен");
-              return;
-            }
-            const headers: Record<string, string> = {};
-            for (const [name, value] of Object.entries(request.headers)) {
-              if (typeof value === "string" && name !== "host" && name !== "connection") {
-                headers[name] = value;
-              }
-            }
-            const upstream = request.pipe(
-              createRequest(
-                {
-                  host: "127.0.0.1",
-                  port: at.port,
-                  method: "POST",
-                  // whisper-server answers OpenAI's shape on its own path too.
-                  path: "/inference",
-                  headers,
-                },
-                (reply) => {
-                  response.writeHead(reply.statusCode ?? 200, reply.headers);
-                  reply.pipe(response);
-                },
-              ),
-            );
-            upstream.on("error", (failure: Error) => {
-              log(`voice: dictation failed: ${failure.message}`);
+            void handleDictation(request, response).catch((failure: unknown) => {
+              log(`voice: dictation failed: ${String(failure)}`);
               if (!response.headersSent) {
-                refuse(response, 502, failure.message);
+                refuse(response, 502, String(failure));
               } else {
                 response.end();
               }

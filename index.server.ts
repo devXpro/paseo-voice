@@ -88,6 +88,7 @@ export default function contribute(server: PluginServerContext) {
       cueVolume: current.cueVolume,
       steady: current.steady,
       phoneSafe: current.phoneSafe,
+      dictionary: current.dictionary,
       googleKey: current.googleKey,
       pronunciations: [],
     }),
