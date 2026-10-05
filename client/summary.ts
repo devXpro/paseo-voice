@@ -59,8 +59,13 @@ export function summarise(id: SectionId, data: Status): Summary {
       return data.localModels.some((model) => model.installed) ? { text: "готов", tone: "ok" } : { text: "нет модели" };
     }
 
-    case "dictation":
-      return data.whisper.installed ? { text: "на месте", tone: "ok" } : { text: "нет модели", tone: "warn" };
+    case "dictation": {
+      const { whisper } = data;
+      if (whisper.downloading) return { text: "качаю", tone: "warn" };
+      if (!whisper.engineInstalled) return { text: "нет движка", tone: "warn" };
+      if (!whisper.models.some((one) => one.installed)) return { text: "нет модели", tone: "warn" };
+      return whisper.wired ? { text: "работает", tone: "ok" } : { text: "не подключена" };
+    }
 
     case "speech":
       // Without the first setting voice mode hears you and has nothing to answer with,

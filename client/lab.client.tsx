@@ -35,6 +35,14 @@ export type Lab = {
     /** Keeps a Google key, or forgets it when handed an empty string. */
     setKey(key: string): void;
     savingKey: boolean;
+    /** Dictation: the engine, its weights, and handing transcription to the plugin. */
+    installRecogniser(): void;
+    fetchRecogniserModel(id: string): void;
+    forgetRecogniserModel(id: string): void;
+    setRecogniserModel(id: string): void;
+    wireDictation(on: boolean): void;
+    setDictionary(text: string): void;
+    mineDictionary(): void;
     setPrompt(text: string): void;
     savingPrompt: boolean;
     applyPatch(): void;
@@ -572,6 +580,10 @@ export function PromptEditor({
   busy,
   onSave,
   onReset,
+  placeholder = "Что агент должен проговаривать, а что оставлять на экране",
+  resetLabel = "Вернуть исходный",
+  emptyLabel = "исходный текст",
+  minHeight = 200,
 }: {
   theme: PluginTheme;
   value: string;
@@ -579,6 +591,11 @@ export function PromptEditor({
   busy: boolean;
   onSave(next: string): void;
   onReset(): void;
+  /** The defaults describe the appended system prompt; the dictionary overrides them. */
+  placeholder?: string;
+  resetLabel?: string;
+  emptyLabel?: string;
+  minHeight?: number;
 }) {
   const [draft, setDraft] = React.useState(value);
   // Follows the server when somebody else changes it, but never while being edited.
@@ -597,10 +614,10 @@ export function PromptEditor({
         multiline
         editable={!busy}
         textAlignVertical="top"
-        placeholder="Что агент должен проговаривать, а что оставлять на экране"
+        placeholder={placeholder}
         placeholderTextColor={theme.colors.foregroundMuted}
         style={{
-          minHeight: 200,
+          minHeight,
           color: theme.colors.foreground,
           backgroundColor: theme.colors.surface2,
           borderColor: dirty ? theme.colors.accent : theme.colors.border,
@@ -613,7 +630,7 @@ export function PromptEditor({
       />
       <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
         <Text style={{ color: theme.colors.foregroundMuted, fontSize: 12, flex: 1 }}>
-          {draft.length} символов{isDefault && !dirty ? " · исходный текст" : ""}
+          {draft.length} символов{isDefault && !dirty ? ` · ${emptyLabel}` : ""}
         </Text>
         {!isDefault || dirty ? (
           <Pressable
@@ -623,7 +640,7 @@ export function PromptEditor({
             }}
             disabled={busy}
           >
-            <Text style={{ color: theme.colors.foregroundMuted, fontSize: 14 }}>Вернуть исходный</Text>
+            <Text style={{ color: theme.colors.foregroundMuted, fontSize: 14 }}>{resetLabel}</Text>
           </Pressable>
         ) : null}
         <Pressable

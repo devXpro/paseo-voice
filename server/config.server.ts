@@ -31,6 +31,63 @@ async function read(): Promise<Json> {
   }
 }
 
+/**
+ * Whether dictation currently transcribes through a proxy on `port`.
+ *
+ * Separate from the speech side on purpose: somebody may want this plugin's Russian
+ * recogniser and Paseo's own voices, or the other way round.
+ */
+export async function isDictationWired(port: number): Promise<boolean> {
+  const config = await read();
+  const stt = object(object(object(config.providers).openai).stt);
+  const feature = object(object(object(config.features).dictation).stt);
+  return typeof stt.baseUrl === "string" && stt.baseUrl.includes(`:${port}`) && feature.provider === "openai";
+}
+
+/**
+ * Points dictation at this plugin, or puts Paseo's own recogniser back.
+ *
+ * Nothing is written when nothing would change — the desktop app watches this file and
+ * restarts the daemon on every touch, which drops phones and breaks the agent's MCP
+ * transport. Returns whether anything was actually written.
+ */
+export async function wireDictation(port: number, on: boolean, model: string): Promise<boolean> {
+  const config = await read();
+  const before = JSON.stringify(config);
+
+  const providers = object(config.providers);
+  const openai = object(providers.openai);
+  const features = object(config.features);
+  const dictation = object(features.dictation);
+
+  if (on) {
+    openai.stt = {
+      ...object(openai.stt),
+      // Ignored by the engine, but the daemon drops the whole block without one.
+      apiKey: "local",
+      baseUrl: `http://127.0.0.1:${port}/v1`,
+    };
+    dictation.stt = { ...object(dictation.stt), provider: "openai", model };
+  } else {
+    // Back to what Paseo ships with, rather than leaving it pointed at a dead port.
+    dictation.stt = { ...object(dictation.stt), provider: "local", model: VOICE_STT_MODEL };
+  }
+
+  providers.openai = openai;
+  config.providers = providers;
+  features.dictation = dictation;
+  config.features = features;
+
+  if (JSON.stringify(config) === before) {
+    return false;
+  }
+  const target = configPath();
+  const staged = `${target}.voice-plugin.tmp`;
+  await writeFile(staged, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });
+  await rename(staged, target);
+  return true;
+}
+
 /** Whether voice mode currently reads through a proxy on `port`. */
 export async function isWired(port: number): Promise<boolean> {
   const config = await read();

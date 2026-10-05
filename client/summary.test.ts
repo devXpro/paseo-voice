@@ -39,7 +39,21 @@ const base: Status = {
   cueVolumeMax: 2,
   cueFolder: "/tmp/music",
   patch: { available: true, applied: true, targets: [], unknownVersion: false, archivePath: "/x", restartRequired: false, error: "" },
-  whisper: { name: "w", bytes: 1, onDisk: 1, installed: true, directory: "" },
+  whisper: {
+    enginePath: "/opt/homebrew/bin/whisper-server",
+    engineInstalled: true,
+    models: [],
+    model: "large-v3-turbo-q8_0",
+    wired: false,
+    running: false,
+    directory: "",
+    downloading: "",
+    downloadedBytes: 0,
+    downloadTotal: 0,
+    busy: "",
+    dictionary: "",
+    error: "",
+  },
   error: "",
 };
 

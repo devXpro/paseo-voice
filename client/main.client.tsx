@@ -14,7 +14,14 @@ import {
   installBinary,
   type modelId,
   preview,
+  fetchRecogniserModel,
+  forgetRecogniserModel,
+  installRecogniser,
+  mineDictionary,
   refreshCloud,
+  setDictionary,
+  setRecogniserModel,
+  wireDictation,
   restartProxy,
   revertPatch,
   setActiveModel,
@@ -143,6 +150,13 @@ export function VoiceSurface({ theme, layout }: PluginSurfaceProps) {
   const refreshRpc = useRpc(refreshCloud);
   const restartProxyRpc = useRpc(restartProxy);
   const keyRpc = useRpc(setKey);
+  const installRecogniserRpc = useRpc(installRecogniser);
+  const fetchModelRpc = useRpc(fetchRecogniserModel);
+  const forgetModelRpc = useRpc(forgetRecogniserModel);
+  const chooseModelRpc = useRpc(setRecogniserModel);
+  const wireDictationRpc = useRpc(wireDictation);
+  const dictionaryRpc = useRpc(setDictionary);
+  const mineRpc = useRpc(mineDictionary);
   const promptRpc = useRpc(setPrompt);
   const applyPatchRpc = useRpc(applyPatch);
   const revertPatchRpc = useRpc(revertPatch);
@@ -406,6 +420,15 @@ export function VoiceSurface({ theme, layout }: PluginSurfaceProps) {
       savingPrompt: savingPrompt.isPending,
       setKey: (key) => savingKey.mutate(key),
       savingKey: savingKey.isPending,
+      // All of these answer with the whole status, including whatever is in progress,
+      // so the panel needs no state of its own for a download that outlives a render.
+      installRecogniser: () => run(installRecogniserRpc({})),
+      fetchRecogniserModel: (id) => run(fetchModelRpc({ id })),
+      forgetRecogniserModel: (id) => run(forgetModelRpc({ id })),
+      setRecogniserModel: (id) => run(chooseModelRpc({ id })),
+      wireDictation: (on) => run(wireDictationRpc({ on })),
+      setDictionary: (text) => run(dictionaryRpc({ text })),
+      mineDictionary: () => run(mineRpc({})),
       applyPatch: () => patching.mutate(false),
       revertPatch: () => patching.mutate(true),
       patching: patching.isPending,

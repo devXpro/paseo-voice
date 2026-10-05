@@ -35,6 +35,10 @@ export type Stored = {
    * text recognisable: to replace or remove it, it has to know exactly what it wrote.
    */
   prompt: string;
+  /** Which whisper weights dictation uses. */
+  dictationModel: string;
+  /** Words the recogniser should expect to hear; biases it away from near-misses. */
+  dictionary: string;
 };
 
 const file = paths.state;
@@ -78,6 +82,10 @@ export const DEFAULTS: Stored = {
   cue: "lobby-time",
   cueVolume: 1,
   prompt: DEFAULT_PROMPT,
+  // The quantised one: half the size of the full weights, and the difference does not
+  // show up in dictation.
+  dictationModel: "large-v3-turbo-q8_0",
+  dictionary: "",
 };
 
 export async function readStored(): Promise<Stored> {
@@ -96,6 +104,11 @@ export async function readStored(): Promise<Stored> {
       cue: typeof parsed.cue === "string" && parsed.cue ? parsed.cue : DEFAULTS.cue,
       cueVolume: typeof parsed.cueVolume === "number" ? clampVolume(parsed.cueVolume) : DEFAULTS.cueVolume,
       prompt: typeof parsed.prompt === "string" && parsed.prompt.trim() ? parsed.prompt : DEFAULTS.prompt,
+      dictationModel:
+        typeof parsed.dictationModel === "string" && parsed.dictationModel
+          ? parsed.dictationModel
+          : DEFAULTS.dictationModel,
+      dictionary: typeof parsed.dictionary === "string" ? parsed.dictionary : DEFAULTS.dictionary,
     };
   } catch {
     return { ...DEFAULTS };

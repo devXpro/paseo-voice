@@ -1,4 +1,4 @@
-import { createServer, type Server } from "node:http";
+import { createServer, request as createRequest, type Server } from "node:http";
 import type { Engine } from "./engine.server.ts";
 import { type Pronunciation, speak as speakWithGoogle, tierOf } from "./google.server.ts";
 import { render as renderCue } from "./cue.server.ts";
@@ -30,6 +30,8 @@ export type ProxyOptions = {
   choice: () => Choice;
   log?: (line: string) => void;
   patience?: BindPatience;
+  /** Where the dictation engine is listening, when this plugin runs one. */
+  recogniser?: () => { port: number; running: boolean };
 };
 
 export type Proxy = {
@@ -78,7 +80,7 @@ function readBody(request: import("node:http").IncomingMessage): Promise<string>
  * expects of `response_format: "pcm"`.
  */
 export function createProxy(options: ProxyOptions): Proxy {
-  const { port, engine, choice, log = () => {} } = options;
+  const { port, engine, choice, log = () => {}, recogniser } = options;
   const attempts = options.patience?.attempts ?? BIND_ATTEMPTS;
   const backoffMs = options.patience?.backoffMs ?? BIND_BACKOFF_MS;
   let server: Server | null = null;
@@ -303,6 +305,54 @@ export function createProxy(options: ProxyOptions): Proxy {
               });
             return;
           }
+          /**
+           * Dictation, passed through to the local whisper engine.
+           *
+           * Paseo posts multipart audio in OpenAI's shape and `whisper-server` answers
+           * in the same shape, so this forwards the body rather than parsing it — the
+           * only thing that has to change is which machine it goes to. Streamed both
+           * ways: these are seconds of audio, and holding them in memory to count the
+           * bytes would add latency to every dictated sentence for nothing.
+           */
+          if (request.method === "POST" && url.startsWith("/v1/audio/transcriptions")) {
+            const at = recogniser?.();
+            if (!at?.running) {
+              refuse(response, 503, "движок распознавания не запущен");
+              return;
+            }
+            const headers: Record<string, string> = {};
+            for (const [name, value] of Object.entries(request.headers)) {
+              if (typeof value === "string" && name !== "host" && name !== "connection") {
+                headers[name] = value;
+              }
+            }
+            const upstream = request.pipe(
+              createRequest(
+                {
+                  host: "127.0.0.1",
+                  port: at.port,
+                  method: "POST",
+                  // whisper-server answers OpenAI's shape on its own path too.
+                  path: "/inference",
+                  headers,
+                },
+                (reply) => {
+                  response.writeHead(reply.statusCode ?? 200, reply.headers);
+                  reply.pipe(response);
+                },
+              ),
+            );
+            upstream.on("error", (failure: Error) => {
+              log(`voice: dictation failed: ${failure.message}`);
+              if (!response.headersSent) {
+                refuse(response, 502, failure.message);
+              } else {
+                response.end();
+              }
+            });
+            return;
+          }
+
           if (request.method === "GET" && url.startsWith("/v1/health")) {
             response.writeHead(200, { "content-type": "application/json" });
             response.end(JSON.stringify({ status: "ok", provider: choice().provider }));

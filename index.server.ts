@@ -5,7 +5,14 @@ import {
   disableSpeech,
   enableSpeech,
   fetchCue,
+  fetchRecogniserModel,
+  forgetRecogniserModel,
   getStatus,
+  mineDictionary,
+  installRecogniser,
+  setDictionary,
+  setRecogniserModel,
+  wireDictation,
   installBinary as installBinaryRpc,
   preview,
   refreshCloud,
@@ -39,6 +46,8 @@ const log = (line: string) => console.log(line);
  *  first ends up in anybody's config, but keeping them adjacent makes a clash obvious. */
 const PROXY_PORT = DEFAULTS.port;
 const ENGINE_PORT = DEFAULTS.port + 1;
+/** The dictation engine, far enough away that a clash is obvious rather than subtle. */
+const DICTATION_PORT = DEFAULTS.port + 2;
 
 export default function contribute(server: PluginServerContext) {
   const engine = createEngine({ port: ENGINE_PORT, log });
@@ -47,6 +56,7 @@ export default function contribute(server: PluginServerContext) {
   const controller = createController({
     engine,
     log,
+    dictationPort: DICTATION_PORT,
     proxy: () => ({ ...proxy.state(), port: PROXY_PORT }),
   });
 
@@ -82,11 +92,19 @@ export default function contribute(server: PluginServerContext) {
       pronunciations: [],
     }),
     log,
+    recogniser: () => controller.recogniserState(),
   });
 
   // Brought up with the plugin rather than on first use: its port is written into
   // `~/.paseo/config.json` and the daemon connects whenever it likes.
   void proxy.start().catch((failure: unknown) => log(`voice: proxy failed to start: ${String(failure)}`));
+
+  // The engine is a child process and dies with a reload, while the config that points
+  // dictation at it does not. Without this every word after a reload comes back as an
+  // error until somebody notices and flips the switch again.
+  void controller
+    .resumeDictation()
+    .catch((failure: unknown) => log(`voice: dictation did not resume: ${String(failure)}`));
 
   /** Every mutation answers with the whole status; the proxy's view is refreshed with it. */
   const fresh = <T>(status: T): T => {
@@ -105,6 +123,14 @@ export default function contribute(server: PluginServerContext) {
   server.handle(setPhoneSafe, async (input) => fresh(await controller.setPhoneSafe(input.phoneSafe)));
   server.handle(setSteady, async (input) => fresh(await controller.setSteady(input.steady)));
   server.handle(setKey, async (input) => fresh(await controller.setKey(input.key)));
+
+  server.handle(installRecogniser, async () => fresh(await controller.installRecogniser()));
+  server.handle(fetchRecogniserModel, async (input) => fresh(await controller.fetchRecogniserModel(input.id)));
+  server.handle(forgetRecogniserModel, async (input) => fresh(await controller.forgetRecogniserModel(input.id)));
+  server.handle(setRecogniserModel, async (input) => fresh(await controller.setRecogniserModel(input.id)));
+  server.handle(wireDictation, async (input) => fresh(await controller.wireDictation(input.on)));
+  server.handle(setDictionary, async (input) => fresh(await controller.setDictionary(input.text)));
+  server.handle(mineDictionary, async () => fresh(await controller.mineDictionary()));
   server.handle(refreshCloud, async () => fresh(await controller.refreshCloud()));
 
   /**

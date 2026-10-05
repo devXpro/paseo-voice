@@ -53,12 +53,43 @@ export const engineState = z.object({
   error: z.string().default(""),
 });
 
-export const whisperState = z.object({
-  name: z.string(),
+/** One downloadable set of weights for dictation. */
+export const whisperModel = z.object({
+  id: z.string(),
+  title: z.string(),
+  note: z.string(),
   bytes: z.number().int().nonnegative(),
   onDisk: z.number().int().nonnegative().default(0),
   installed: z.boolean(),
-  directory: z.string(),
+});
+
+/**
+ * Dictation, which this plugin now runs rather than reports on.
+ *
+ * Paseo's built-in recogniser is English-only, so Russian comes back as confident
+ * nonsense. The engine here is `whisper-server` — the one part that has to be a native
+ * binary — and everything around it, including installing it, is the plugin's job.
+ */
+export const whisperState = z.object({
+  /** Whether `whisper-server` is on this machine, and where. */
+  enginePath: z.string().default(""),
+  engineInstalled: z.boolean().default(false),
+  models: z.array(whisperModel).default([]),
+  /** Which one is chosen, downloaded or not. */
+  model: z.string().default(""),
+  /** Whether Paseo's dictation currently reads through this plugin. */
+  wired: z.boolean().default(false),
+  running: z.boolean().default(false),
+  /** Where the weights are kept, for somebody who wants to look. */
+  directory: z.string().default(""),
+  /** 0 when nothing is downloading, otherwise how far along. */
+  downloading: z.string().default(""),
+  downloadedBytes: z.number().int().nonnegative().default(0),
+  downloadTotal: z.number().int().nonnegative().default(0),
+  busy: z.string().default(""),
+  /** Words fed to the recogniser so it stops turning jargon into ordinary speech. */
+  dictionary: z.string().default(""),
+  error: z.string().default(""),
 });
 
 /**
@@ -229,6 +260,46 @@ export const setKey = defineRpc({
 
 /** Brings the local server back up after it failed to bind. */
 export const restartProxy = defineRpc({ name: "voice.restart-proxy", input: z.object({}), output: status });
+
+/** Installs `whisper-server` through Homebrew, which takes minutes. */
+export const installRecogniser = defineRpc({ name: "voice.install-recogniser", input: z.object({}), output: status });
+
+/** Starts or resumes fetching a set of weights. Progress arrives through the status. */
+export const fetchRecogniserModel = defineRpc({
+  name: "voice.fetch-model",
+  input: z.object({ id: z.string().min(1) }),
+  output: status,
+});
+
+export const forgetRecogniserModel = defineRpc({
+  name: "voice.forget-model",
+  input: z.object({ id: z.string().min(1) }),
+  output: status,
+});
+
+/** Chooses which weights dictation uses. */
+export const setRecogniserModel = defineRpc({
+  name: "voice.set-recogniser-model",
+  input: z.object({ id: z.string().min(1) }),
+  output: status,
+});
+
+/** Points Paseo's dictation at this plugin, or puts its own recogniser back. */
+export const wireDictation = defineRpc({
+  name: "voice.wire-dictation",
+  input: z.object({ on: z.boolean() }),
+  output: status,
+});
+
+/** Replaces the vocabulary hint. The engine restarts to pick it up, which is a second. */
+export const setDictionary = defineRpc({
+  name: "voice.set-dictionary",
+  input: z.object({ text: z.string().max(4000) }),
+  output: status,
+});
+
+/** Builds the hint from what this person has actually dictated before. */
+export const mineDictionary = defineRpc({ name: "voice.mine-dictionary", input: z.object({}), output: status });
 
 /** Re-reads the key file and asks Google for its catalogue again. */
 export const refreshCloud = defineRpc({ name: "voice.refresh-cloud", input: z.object({}), output: status });

@@ -544,22 +544,136 @@ export const SECTIONS: Section[] = [
     title: "Диктовка",
     icon: "Keyboard",
     Component: (lab) => {
-      const { data, theme } = lab;
+      const { data, theme, act } = lab;
+      const w = data.whisper;
+      const ready = w.engineInstalled && w.models.some((one) => one.installed);
+      const chosen = w.models.find((one) => one.id === w.model);
+
       return (
-        <Group
-          theme={theme}
-          title="Модель распознавания"
-          footer={`Её читает paseo-whisper из ${data.whisper.directory}. Плагин только показывает, на месте ли файл — чужой конфиг он не трогает.`}
-        >
-          <Row
+        <View>
+          {w.error ? (
+            <Group theme={theme}>
+              <Row theme={theme} label="Не вышло" hint={w.error} valueColour={tone(theme, "warn")} last />
+            </Group>
+          ) : null}
+
+          <Group
             theme={theme}
-            label={data.whisper.name}
-            hint={data.whisper.installed ? gigabytes(data.whisper.onDisk) : `нужно ${gigabytes(data.whisper.bytes)}`}
-            value={data.whisper.installed ? "на месте" : "нет"}
-            valueColour={tone(theme, data.whisper.installed ? "ok" : "warn")}
-            last
-          />
-        </Group>
+            title="Движок"
+            footer={
+              "Распознавание — это whisper.cpp, единственная часть, которую нельзя написать " +
+              "на языке плагина. Ставится через Homebrew, минуты на закачку и сборку."
+            }
+          >
+            <Row
+              theme={theme}
+              label="whisper-server"
+              hint={w.engineInstalled ? w.enginePath : "нужен для распознавания"}
+              value={w.busy ? w.busy : w.engineInstalled ? "на месте" : "нет"}
+              valueColour={tone(theme, w.engineInstalled ? "ok" : "warn")}
+              action={!w.engineInstalled && !w.busy ? "Поставить" : undefined}
+              onPress={!w.engineInstalled && !w.busy ? () => act.installRecogniser() : undefined}
+              last
+            />
+          </Group>
+
+          <Group
+            theme={theme}
+            title="Модель"
+            footer={`Лежит в ${w.directory}. Это веса плагина, а не чужого сервиса — он их качает и хранит сам.`}
+          >
+            {w.models.map((one, index) => {
+              const busy = w.downloading === one.id;
+              const share = busy && w.downloadTotal > 0 ? Math.round((w.downloadedBytes / w.downloadTotal) * 100) : 0;
+              return (
+                <Row
+                  key={one.id}
+                  theme={theme}
+                  label={one.title}
+                  hint={busy ? `${share}% · ${gigabytes(w.downloadedBytes)} из ${gigabytes(w.downloadTotal)}` : one.note}
+                  value={
+                    one.id === w.model && one.installed
+                      ? "выбрана"
+                      : one.installed
+                        ? gigabytes(one.onDisk)
+                        : gigabytes(one.bytes)
+                  }
+                  valueColour={tone(theme, one.id === w.model && one.installed ? "ok" : undefined)}
+                  action={busy ? undefined : one.installed ? (one.id === w.model ? "Удалить" : "Выбрать") : "Скачать"}
+                  onPress={
+                    busy
+                      ? undefined
+                      : one.installed
+                        ? one.id === w.model
+                          ? () => act.forgetRecogniserModel(one.id)
+                          : () => act.setRecogniserModel(one.id)
+                        : () => act.fetchRecogniserModel(one.id)
+                  }
+                  last={index === w.models.length - 1}
+                />
+              );
+            })}
+          </Group>
+
+          <Group
+            theme={theme}
+            title="Словарь"
+            footer={
+              "Слова, которые движок ждёт услышать. Он опирается на них, когда звук " +
+              "можно разобрать двояко — а именно так жаргон и превращается в обычную " +
+              "речь: «постгрес» в «прогресс», «докер» в «доктор». Кнопка ниже соберёт " +
+              "список из того, что ты уже наговаривал."
+            }
+          >
+            <PromptEditor
+              theme={theme}
+              value={w.dictionary}
+              isDefault={w.dictionary === ""}
+              busy={w.busy !== ""}
+              onSave={(next) => act.setDictionary(next)}
+              onReset={() => act.setDictionary("")}
+              placeholder="постгрес, докер, кубер, релей, ребейз — слова через запятую"
+              resetLabel="Очистить"
+              emptyLabel="пусто"
+              minHeight={120}
+            />
+            <Row
+              theme={theme}
+              label="Собрать из моих переписок"
+              hint="Возьмёт слова из того, что ты диктовал раньше"
+              action={w.busy ? "Читаю…" : "Собрать"}
+              onPress={w.busy ? undefined : () => act.mineDictionary()}
+              last
+            />
+          </Group>
+
+          <Group
+            theme={theme}
+            title="Подключение"
+            footer={
+              "Пока выключено, Paseo распознаёт своим Parakeet — он только английский, " +
+              "и русская речь превращается в уверенную бессмыслицу. Включение переписывает " +
+              "настройку диктовки на этот плагин; выключение возвращает как было."
+            }
+          >
+            <Switch
+              theme={theme}
+              label="Распознавать через плагин"
+              hint={
+                w.busy
+                  ? w.busy
+                  : !ready
+                    ? "сначала движок и модель"
+                    : chosen
+                      ? `${chosen.title}, язык из раздела «Голос»`
+                      : "модель не выбрана"
+              }
+              value={w.wired}
+              onChange={(next) => act.wireDictation(next)}
+              last
+            />
+          </Group>
+        </View>
       );
     },
   },

@@ -3,7 +3,7 @@ import path from "node:path";
 import { z } from "zod";
 import { LOCAL_MODEL, type status as statusSchema } from "../shared/voice.shared.ts";
 import { installedRelease } from "./binary.server.ts";
-import { isWired, wire } from "./config.server.ts";
+import { isDictationWired, isWired, wire, wireDictation as writeDictation } from "./config.server.ts";
 import {
   DEFAULT_PROMPT,
   disable as disableDaemonSpeech,
@@ -16,10 +16,22 @@ import type { Engine } from "./engine.server.ts";
 import { folder as cueFolder, list as listCues } from "./cue.server.ts";
 import { type GoogleVoice, hintOf, listVoices, readKey, writeKey } from "./google.server.ts";
 import { paths } from "./paths.server.ts";
+import { asPrompt, mine } from "./vocabulary.server.ts";
 import { apply as applyPatches, inspect as inspectPatches, revert as revertPatches } from "./patches.server.ts";
 import { clampVolume, clampRate, RATE_MAX, VOLUME_MAX, RATE_MIN, readStored, type Stored, writeStored } from "./state.server.ts";
 import { resetsAt, summary } from "./usage.server.ts";
-import { WHISPER_MODEL, whisperDir, whisperInstalled } from "./whisper.server.ts";
+import {
+  createRecogniser,
+  enginePath,
+  fetchModel,
+  forgetModel,
+  installedBytes,
+  installEngine,
+  modelDir,
+  MODELS,
+  modelOf,
+  type Recogniser,
+} from "./whisper.server.ts";
 
 export type Status = z.infer<typeof statusSchema>;
 
@@ -35,6 +47,13 @@ export type Controller = {
   setCue(cue: string): Promise<Status>;
   setCueVolume(volume: number): Promise<Status>;
   setKey(key: string): Promise<Status>;
+  installRecogniser(): Promise<Status>;
+  fetchRecogniserModel(id: string): Promise<Status>;
+  forgetRecogniserModel(id: string): Promise<Status>;
+  setRecogniserModel(id: string): Promise<Status>;
+  wireDictation(on: boolean): Promise<Status>;
+  setDictionary(text: string): Promise<Status>;
+  mineDictionary(): Promise<Status>;
   refreshCloud(): Promise<Status>;
   setPrompt(text: string): Promise<Status>;
   applyPatch(): Promise<Status>;
@@ -43,6 +62,10 @@ export type Controller = {
   enableSpeech(): Promise<Status>;
   disableSpeech(): Promise<Status>;
   markBinaryChanged(): void;
+  /** Where the dictation engine is, for the proxy to forward to. */
+  recogniserState(): { port: number; running: boolean };
+  /** Brings the engine back if the config says dictation goes through this plugin. */
+  resumeDictation(): Promise<void>;
   /** The live choice the proxy reads on every sentence. */
   choice(): Promise<Stored & { googleKey: string }>;
 };
@@ -86,6 +109,7 @@ async function engineSpeakers(port: number): Promise<string[]> {
 export function createController(options: {
   engine: Engine;
   log?: (line: string) => void;
+  dictationPort?: number;
   /** Read at snapshot time: the proxy is owned by the entry point, not by this. */
   proxy?: () => { listening: boolean; port: number; error: string };
 }): Controller {
@@ -97,6 +121,15 @@ export function createController(options: {
   // voice, not between two taps on a screen.
   let catalogue: GoogleVoice[] | null = null;
   let cloudError = "";
+
+  // Dictation. The engine is a child process kept warm between sentences; the rest is
+  // what the panel needs to show while something slow is happening.
+  const recogniser = createRecogniser({ port: options.dictationPort ?? 8125, log });
+  let downloading = "";
+  let downloaded = 0;
+  let downloadTotal = 0;
+  let dictationBusy = "";
+  let dictationError = "";
 
   async function cloudVoices(key: string): Promise<GoogleVoice[]> {
     if (!key) {
@@ -117,13 +150,34 @@ export function createController(options: {
     return catalogue ?? [];
   }
 
+  /** Everything the dictation section needs, gathered in one pass. */
+  async function dictationState(port: number) {
+    const [engine, wired, ...sizes] = await Promise.all([
+      enginePath(),
+      isDictationWired(port),
+      ...MODELS.map((one) => installedBytes(one.id)),
+    ]);
+    return {
+      engine,
+      wired,
+      models: MODELS.map((one, at) => ({
+        id: one.id,
+        title: one.title,
+        note: one.note,
+        bytes: one.bytes,
+        onDisk: sizes[at] ?? 0,
+        installed: (sizes[at] ?? 0) > 0,
+      })),
+    };
+  }
+
   async function snapshot(stored: Stored): Promise<Status> {
     const key = await readKey();
     const [voices, models, usage, whisperSize, patch, cues, music] = await Promise.all([
       cloudVoices(key),
       installedModels(),
       summary(),
-      whisperInstalled(),
+      dictationState(stored.port),
       inspectPatches(),
       listCues(),
       cueFolder(),
@@ -169,11 +223,19 @@ export function createController(options: {
       prompt: { text: stored.prompt, isDefault: stored.prompt === DEFAULT_PROMPT, defaultText: DEFAULT_PROMPT },
       patch,
       whisper: {
-        name: WHISPER_MODEL.name,
-        bytes: WHISPER_MODEL.bytes,
-        onDisk: whisperSize,
-        installed: whisperSize > 0,
-        directory: whisperDir,
+        enginePath: whisperSize.engine,
+        engineInstalled: whisperSize.engine !== "",
+        models: whisperSize.models,
+        model: stored.dictationModel,
+        wired: whisperSize.wired,
+        running: recogniser.running(),
+        directory: modelDir,
+        downloading,
+        downloadedBytes: downloaded,
+        downloadTotal,
+        busy: dictationBusy,
+        dictionary: stored.dictionary,
+        error: dictationError || recogniser.lastError(),
       },
       error: "",
     };
@@ -311,6 +373,134 @@ export function createController(options: {
       return snapshot(await resolved());
     },
 
+    /**
+     * Installs the engine. Minutes, and it wants the network, so the panel is told it
+     * is running rather than being left to look frozen.
+     */
+    async installRecogniser() {
+      dictationBusy = "Ставлю движок через Homebrew…";
+      dictationError = "";
+      try {
+        await installEngine(log);
+      } catch (failure) {
+        dictationError = failure instanceof Error ? failure.message : String(failure);
+      } finally {
+        dictationBusy = "";
+      }
+      return snapshot(await resolved());
+    },
+
+    /** Hundreds of megabytes; progress is published through the status. */
+    async fetchRecogniserModel(id) {
+      if (downloading) {
+        return snapshot(await resolved());
+      }
+      downloading = id;
+      downloaded = 0;
+      downloadTotal = modelOf(id)?.bytes ?? 0;
+      dictationError = "";
+      try {
+        await fetchModel(id, (done, total) => {
+          downloaded = done;
+          downloadTotal = total;
+        });
+      } catch (failure) {
+        dictationError = failure instanceof Error ? failure.message : String(failure);
+      } finally {
+        downloading = "";
+      }
+      return snapshot(await resolved());
+    },
+
+    async forgetRecogniserModel(id) {
+      const stored = await resolved();
+      if (recogniser.loaded() === id) {
+        recogniser.stop();
+      }
+      await forgetModel(id);
+      return snapshot(stored);
+    },
+
+    async setRecogniserModel(id) {
+      const stored = await resolved();
+      const next = { ...stored, dictationModel: id };
+      await writeStored(next);
+      // The running engine has the old weights in memory; let the next sentence load
+      // the new ones rather than leaving a quiet mismatch.
+      if (recogniser.loaded() !== id) {
+        recogniser.stop();
+      }
+      return snapshot(next);
+    },
+
+    /**
+     * Hands dictation to this plugin, or gives it back.
+     *
+     * The engine is started here rather than on the first dictated word: loading the
+     * weights takes seconds, and the first sentence of a session should not be the one
+     * that waits for them.
+     */
+    async wireDictation(on) {
+      const stored = await resolved();
+      dictationError = "";
+      if (on) {
+        if ((await installedBytes(stored.dictationModel)) === 0) {
+          dictationError = "сначала скачай модель";
+          return snapshot(stored);
+        }
+        dictationBusy = "Поднимаю движок…";
+        try {
+          await recogniser.ensure(stored.dictationModel, stored.language === "russian" ? "ru" : "en", stored.dictionary);
+        } catch (failure) {
+          dictationError = failure instanceof Error ? failure.message : String(failure);
+          dictationBusy = "";
+          return snapshot(stored);
+        }
+        dictationBusy = "";
+      } else {
+        recogniser.stop();
+      }
+      const changed = await writeDictation(stored.port, on, stored.dictationModel);
+      if (changed) {
+        restartRequired = true;
+        log(`voice: dictation ${on ? "wired to" : "returned from"} 127.0.0.1:${stored.port}`);
+      }
+      return snapshot(stored);
+    },
+
+    /** The engine takes this at startup, so a change costs it a restart — about a second. */
+    async setDictionary(text) {
+      const stored = await resolved();
+      const next = { ...stored, dictionary: text.trim() };
+      await writeStored(next);
+      if (recogniser.running()) {
+        dictationBusy = "Перезапускаю движок со словарём…";
+        try {
+          await recogniser.ensure(next.dictationModel, next.language === "russian" ? "ru" : "en", next.dictionary);
+        } catch (failure) {
+          dictationError = failure instanceof Error ? failure.message : String(failure);
+        } finally {
+          dictationBusy = "";
+        }
+      }
+      return snapshot(next);
+    },
+
+    /** Reads this person's own dictated turns and keeps the words they actually use. */
+    async mineDictionary() {
+      dictationBusy = "Читаю переписки…";
+      dictationError = "";
+      try {
+        const terms = await mine();
+        return await this.setDictionary(asPrompt(terms));
+      } catch (failure) {
+        dictationError = failure instanceof Error ? failure.message : String(failure);
+        return snapshot(await resolved());
+      } finally {
+        dictationBusy = "";
+      }
+    },
+
     async refreshCloud() {
       catalogue = null;
       cloudError = "";
@@ -366,6 +556,35 @@ export function createController(options: {
       await disableDaemonSpeech(stored.prompt);
       await reloadDaemon().catch((failure: unknown) => log(`voice: reload failed: ${String(failure)}`));
       return snapshot(await resolved());
+    },
+
+    recogniserState() {
+      return { port: recogniser.port, running: recogniser.running() };
+    },
+
+    /**
+     * Called on start, because the config outlives the process.
+     *
+     * Reloading the plugin kills the engine but leaves `~/.paseo/config.json` pointing
+     * dictation here, so Paseo keeps sending audio to a proxy with nothing behind it
+     * and every dictated word comes back as "движок распознавания не запущен". The
+     * switch in the panel is for turning the feature on, not for surviving a restart.
+     */
+    async resumeDictation() {
+      const stored = await resolved();
+      if (!(await isDictationWired(stored.port))) {
+        return;
+      }
+      if ((await installedBytes(stored.dictationModel)) === 0) {
+        dictationError = "модель не скачана, а диктовка прописана на плагин";
+        return;
+      }
+      try {
+        await recogniser.ensure(stored.dictationModel, stored.language === "russian" ? "ru" : "en", stored.dictionary);
+      } catch (failure) {
+        dictationError = failure instanceof Error ? failure.message : String(failure);
+        log(`voice: dictation did not resume: ${dictationError}`);
+      }
     },
 
     markBinaryChanged() {
