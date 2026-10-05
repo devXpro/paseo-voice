@@ -1,6 +1,6 @@
 {
   "name": "paseo-voice",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Russian speech for Paseo voice mode: Google Cloud TTS, music instead of the waiting beep, and fixes for the sentences Paseo drops.",
   "license": "MIT",
   "author": "Roman Yarmolenko",
