@@ -124,6 +124,8 @@ export const patchTarget = z.object({
   note: z.string(),
   applied: z.boolean(),
   unknownVersion: z.boolean().default(false),
+  /** What the last automatic run could not do with it; empty when nothing. */
+  alert: z.string().default(""),
 });
 
 /** One option for the sound that loops while the agent is thinking. */
@@ -141,6 +143,8 @@ export const ttsPatch = z.object({
   targets: z.array(patchTarget).default([]),
   /** The file is there but its shape changed — a Paseo this plugin does not know. */
   unknownVersion: z.boolean().default(false),
+  /** Puts the corrections back by itself after a Paseo update; off until applied by hand. */
+  auto: z.boolean().default(false),
   archivePath: z.string().default(""),
   /** The daemon already has the old code in memory, so this needs a full restart. */
   restartRequired: z.boolean().default(false),

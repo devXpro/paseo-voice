@@ -420,7 +420,10 @@ export const SECTIONS: Section[] = [
                 key={target.id}
                 theme={theme}
                 label={target.title}
-                hint={target.unknownVersion ? "Код в этой версии Paseo изменился — якоря не совпали" : target.note}
+                hint={
+                  target.alert ||
+                  (target.unknownVersion ? "Код в этой версии Paseo изменился — якоря не совпали" : target.note)
+                }
                 value={target.applied ? "включено" : "нет"}
                 valueColour={tone(theme, target.applied ? "ok" : "warn")}
                 last={index === patch.targets.length - 1}
@@ -442,6 +445,17 @@ export const SECTIONS: Section[] = [
               hint={patch.archivePath || "app.asar не найден"}
               value={patch.available ? "найден" : "нет"}
               valueColour={tone(theme, patch.available ? "ok" : "warn")}
+            />
+            <Row
+              theme={theme}
+              label="После обновлений Paseo"
+              hint={
+                patch.auto
+                  ? "Накладывает сам, если файлы совпали с проверенными. Иначе не трогает и пишет здесь почему"
+                  : "Включится после «Наложить»; откат выключает"
+              }
+              value={patch.auto ? "сам" : "выключено"}
+              valueColour={tone(theme, patch.auto ? "ok" : "warn")}
             />
             <Row
               theme={theme}

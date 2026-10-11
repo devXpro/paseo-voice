@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { mkdtemp, readFile, rm, utimes, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
-import { fingerprintOf, fit, MARKER, patchSource, TARGETS } from "./patches.server.ts";
+import { type Archive, locate, readArchive, readEntry } from "./asar.server.ts";
+import { asarIntegrityOn, fingerprintOf, fit, judge, MARKER, patchSource, TARGETS } from "./patches.server.ts";
 
 /** The shape of the two functions this corrects, as Paseo 0.10.2 compiles them. */
 const splicesOf = (id: string) => TARGETS.find((target) => target.id === id)!.splices;
@@ -104,28 +106,77 @@ test("a target too small to hold the patch is refused", () => {
   assert.equal(fit(outcome.ok ? outcome.text : "", 10), null);
 });
 
+const sha256 = (text: string) => createHash("sha256").update(text, "utf8").digest("hex");
+/** Room to spare, so these are about the decision rather than about squeezing. */
+const sized = (text: string) => ({ text, size: Buffer.byteLength(text) + 2000 });
+/** The drain correction, as if reviewed against exactly the file above. */
+const REVIEWED = { ...TARGETS.find((target) => target.id === "drain")!, verified: [sha256(ORIGINAL)] };
+
+test("a file the correction was reviewed against is written without asking", () => {
+  assert.equal(judge(REVIEWED, sized(ORIGINAL), true).kind, "write");
+});
+
+test("a changed file is left alone even when every anchor still fits", () => {
+  // What the hash is for: no anchor mentions this constant, but the grouping the
+  // correction inserts does — this would land, then throw on every sentence.
+  const renamed = ORIGINAL.replaceAll("MAX_TTS_SEGMENT_CHARS", "MAX_SEGMENT_CHARS");
+  assert.deepEqual(judge(REVIEWED, sized(renamed), true), {
+    kind: "unverified",
+    sha: sha256(renamed),
+    anchorsFit: true,
+  });
+  // The person at the button is trusted with the same file; the hash is the automatic run's check.
+  assert.equal(judge(REVIEWED, sized(renamed), false).kind, "write");
+});
+
+test("a changed file whose anchors are gone is reported as one to rewrite", () => {
+  const rewritten = ORIGINAL.replace("for (const sentence of sentences) {", "for (const s of sentences) {");
+  assert.deepEqual(judge(REVIEWED, sized(rewritten), true), {
+    kind: "unverified",
+    sha: sha256(rewritten),
+    anchorsFit: false,
+  });
+});
+
+test("a correction already in place is left as it is", () => {
+  const once = patchSource(ORIGINAL, TTS);
+  assert.deepEqual(judge(REVIEWED, sized(once.ok ? once.text : ""), true), { kind: "in-place" });
+});
+
 /**
- * Checked against the untouched originals the plugin keeps when it first patches, not
- * against whatever is in the archive right now — that one may already carry the patch.
+ * Against the Paseo installed on this machine, when there is one. Its files have to be
+ * ones the corrections were reviewed against, or the automatic run will leave them out
+ * after an update — and this is the quickest place to find that out. A file already
+ * carrying the correction is judged by the original kept beside it.
  */
-for (const [name, splices, what] of [
-  ["tts-manager.js", TTS, "выдача звука"],
-  ["voice-turn-controller.js", MUTE, "мьют"],
-] as const) {
-  test(`правка «${what}» ложится на настоящий файл установленного Paseo`, async (t) => {
-    const file = path.join(homedir(), ".paseo-voice", "patches", `${name}.original.js`);
-    let source: string;
+const INSTALLED = "/Applications/Paseo.app/Contents/Resources/app.asar";
+
+for (const target of TARGETS.filter((one) => one.kind === "asar")) {
+  test(`правка «${target.title}» проверена на файле установленного Paseo`, async (t) => {
+    let archive: Archive;
     try {
-      source = await readFile(file, "utf8");
+      archive = await readArchive(INSTALLED);
     } catch {
-      t.skip(`нет сохранённого оригинала ${name}`);
+      t.skip("Paseo не установлен");
       return;
     }
-    const outcome = patchSource(source, splices);
-    assert.equal(outcome.ok, true, "якоря обязаны совпасть с установленной версией");
-    const fitted = fit(outcome.ok ? outcome.text : "", Buffer.byteLength(source));
-    assert.notEqual(fitted, null, "правка обязана влезть в исходный размер");
-    assert.equal(Buffer.byteLength(fitted ?? ""), Buffer.byteLength(source));
+    const entry = locate(archive, target.entry);
+    assert.ok(entry, `в архиве нет ${target.entry}`);
+    const name = target.entry.split("/").pop() ?? target.id;
+    let source = (await readEntry(archive.path, entry)).toString("utf8");
+    if (source.includes(MARKER)) {
+      try {
+        source = await readFile(path.join(homedir(), ".paseo-voice", "patches", `${name}.original`), "utf8");
+      } catch {
+        t.skip(`правка наложена, а оригинала ${name} рядом нет`);
+        return;
+      }
+    }
+    assert.equal(
+      judge(target, { text: source, size: Buffer.byteLength(source) }, true).kind,
+      "write",
+      `Paseo изменил ${name}: сравни с оригиналом, поправь правку и добавь в verified ${sha256(source)}`,
+    );
   });
 }
 
@@ -152,14 +203,15 @@ test("the mute correction adds the watchdog, the flush and the chunk timestamp",
   assert.ok(text.includes("lastChunkAt = Date.now();"), "и видеть каждый приходящий кусок звука");
 });
 
+/** The source Paseo plays the cue from, as Metro minifies it. */
+const BUNDLE =
+  `C=Uint8Array.from(Buffer.from(s.THINKING_TONE_NATIVE_PCM_BASE64,"base64")),` +
+  `T={size:C.byteLength,type:"audio/pcm;rate=16000;bits=16",` +
+  `arrayBuffer:async()=>C.buffer.slice(C.byteOffset,C.byteOffset+C.byteLength)};` +
+  `const zz=600,u=350,p=1500,q=7;`;
+
 test("the cue correction makes the desktop ask the plugin for the sound", () => {
-  // The source Paseo plays the cue from, as Metro minifies it.
-  const bundle =
-    `C=Uint8Array.from(Buffer.from(s.THINKING_TONE_NATIVE_PCM_BASE64,"base64")),` +
-    `T={size:C.byteLength,type:"audio/pcm;rate=16000;bits=16",` +
-    `arrayBuffer:async()=>C.buffer.slice(C.byteOffset,C.byteOffset+C.byteLength)};` +
-    `const zz=600,u=350,p=1500,q=7;`;
-  const outcome = patchSource(bundle, splicesOf("cue"));
+  const outcome = patchSource(BUNDLE, splicesOf("cue"));
 
   assert.equal(outcome.ok, true);
   const text = outcome.ok ? outcome.text : "";
@@ -174,6 +226,33 @@ test("the cue correction makes the desktop ask the plugin for the sound", () => 
 test("an ambiguous shape is refused rather than guessed at", () => {
   const twice = `x=350,y=1500 ... a=350,b=1500`;
   assert.deepEqual(patchSource(twice, splicesOf("cue")), { ok: false, reason: "unknown-version" });
+});
+
+test("the bundle has no hash to check, so its shape and a clean parse decide", () => {
+  assert.equal(judge(TARGETS.find((one) => one.id === "cue")!, sized(BUNDLE), true).kind, "write");
+});
+
+test("a bundle that would not parse is never written", () => {
+  const verdict = judge(TARGETS.find((one) => one.id === "cue")!, sized(`${BUNDLE}}{`), true);
+  assert.equal(verdict.kind, "refused");
+});
+
+test("the asar integrity fuse is read off the wire, and only a 1 turns it on", () => {
+  const wire = (fuses: string) =>
+    Buffer.concat([
+      Buffer.from("junk"),
+      Buffer.from("dL7pKGdnNz796PbbjQWNKmHXBZaB9tsX"),
+      Buffer.from([1, fuses.length]),
+      Buffer.from(fuses),
+      Buffer.from("tail"),
+    ]);
+  assert.equal(asarIntegrityOn(wire("101100011")), false, "Paseo 0.11.1 as it ships");
+  assert.equal(asarIntegrityOn(wire("101110011")), true);
+  assert.equal(asarIntegrityOn(wire("1011r0011")), false, "a removed fuse cannot be on");
+  assert.equal(asarIntegrityOn(wire("101")), null, "a wire too short to carry this fuse says nothing");
+  assert.equal(asarIntegrityOn(Buffer.from("no sentinel in here")), null);
+  // A read that ends inside the wire must not pass for "off".
+  assert.equal(asarIntegrityOn(wire("101110011").subarray(0, 4 + 32 + 2 + 3)), null);
 });
 
 /**

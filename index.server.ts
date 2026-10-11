@@ -107,6 +107,10 @@ export default function contribute(server: PluginServerContext) {
     .resumeDictation()
     .catch((failure: unknown) => log(`voice: dictation did not resume: ${String(failure)}`));
 
+  // A Paseo update replaces the files the corrections live in and ends in a restart,
+  // which ends here.
+  void controller.autoPatch().catch((failure: unknown) => log(`voice: auto-patch failed: ${String(failure)}`));
+
   /** Every mutation answers with the whole status; the proxy's view is refreshed with it. */
   const fresh = <T>(status: T): T => {
     refreshChoice();
@@ -248,6 +252,7 @@ export default function contribute(server: PluginServerContext) {
 
   return () => {
     engine.stop();
+    controller.stopRecogniser();
     void proxy.stop();
   };
 }

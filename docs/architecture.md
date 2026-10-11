@@ -67,7 +67,7 @@ nothing is installed at runtime.
 | `proxy.server.ts` | The HTTP server on `:8123`. |
 | `google.server.ts` | Google's API: voices, synthesis, billing families, the key. |
 | `engine.server.ts` | Starting, stopping and health-checking the local binary. |
-| `patches.server.ts` | The three corrections, and applying and reverting them. |
+| `patches.server.ts` | The three corrections: applying, reverting, and putting them back after an update. |
 | `asar.server.ts` | Just enough of the asar format to read and overwrite one entry. |
 | `cue.server.ts` | Rendering the waiting music; decoding, levelling, caching. |
 | `catalogue.server.ts` | The four CC BY tracks: URLs, hashes, attribution. |
@@ -75,7 +75,8 @@ nothing is installed at runtime.
 | `usage.server.ts` | Characters per family per month, and what they cost. |
 | `state.server.ts` | The stored choice, with its defaults and its clamps. |
 | `config.server.ts` | Reading and writing `~/.paseo/config.json`. |
-| `daemon-settings.server.ts` | The two daemon settings and the appended prompt. |
+| `daemon-settings.server.ts` | The two daemon settings and the appended prompt; asking the daemon to reload or restart. |
+| `notify.server.ts` | A macOS notification, for what cannot wait until somebody opens the panel. |
 | `whisper.server.ts` | Reports on the dictation model. Reports only. |
 | `paths.server.ts` | Every path in one place. |
 | `binary.server.ts` | Fetching the local engine from its release. |
@@ -97,6 +98,9 @@ weights with it.
   bin/qwen_tts        the local engine, fetched from a release and checksummed
   models/<id>/        local weights, one directory per model
   music/              your own tracks; .builtin/ holds the four shipped ones
-  patches/            the untouched originals, for reverting
+  patches/            the untouched originals, for reverting; auto.json, what the
+                      automatic run remembers; <name>.pending, an upstream file
+                      that changed and waits for review
+  restart.log         the last restart this plugin asked of the daemon
   ios-build/          the Paseo checkout and build output
 ```

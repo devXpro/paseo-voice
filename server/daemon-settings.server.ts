@@ -1,4 +1,4 @@
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { readFile, rename, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
@@ -146,6 +146,48 @@ export function reloadDaemon(): Promise<string> {
   return new Promise((resolve, reject) => {
     execFile(cli, ["reload"], { timeout: 20_000 }, (error, stdout, stderr) =>
       error ? reject(new Error(stderr.trim() || error.message)) : resolve(stdout.trim()),
+    );
+  });
+}
+
+/**
+ * Asks the daemon to restart, the way Paseo's own button does, and lets go at once. The
+ * shell backgrounds the CLI so that launchd adopts it straight away: the restart stops
+ * this plugin, and a worker slow to exit has its whole process tree killed by the
+ * supervisor — which would take a CLI still parented here along with it. Only the
+ * daemon goes; the desktop app and its window stay up.
+ */
+export function restartDaemon(logFile: string): void {
+  if (!process.env.PASEO_CLI) {
+    throw new Error("PASEO_CLI не задан — не могу перезапустить демон");
+  }
+  spawn("/bin/sh", ["-c", '"$PASEO_CLI" restart --json >"$1" 2>&1 &', "sh", logFile], {
+    detached: true,
+    stdio: "ignore",
+  })
+    // Unheard, a failed spawn is an exception that takes the whole plugin down.
+    .on("error", () => {})
+    .unref();
+}
+
+/** `ps -o etime` — `[[dd-]hh:]mm:ss` — in seconds; null for anything else. */
+export function secondsOf(etime: string): number | null {
+  const parts = etime.trim().match(/^(?:(\d+)-)?(?:(\d+):)?(\d+):(\d+)$/);
+  if (!parts) {
+    return null;
+  }
+  const [, days = "0", hours = "0", minutes = "0", seconds = "0"] = parts;
+  return ((Number(days) * 24 + Number(hours)) * 60 + Number(minutes)) * 60 + Number(seconds);
+}
+
+/**
+ * How long the daemon has been up, in seconds. The plugin process is its child, so the
+ * parent's elapsed time is the answer. Null when `ps` will not say.
+ */
+export function daemonUptime(): Promise<number | null> {
+  return new Promise((resolve) => {
+    execFile("ps", ["-o", "etime=", "-p", String(process.ppid)], { timeout: 5_000 }, (error, stdout) =>
+      resolve(error ? null : secondsOf(stdout)),
     );
   });
 }

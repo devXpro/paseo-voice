@@ -20,11 +20,22 @@ leading indentation is halved, then dropped, then the remainder is padded with s
 a shape. An anchor that is missing, or that occurs twice, is a refusal — reported as
 «незнакомая версия Paseo». An upstream rewrite therefore cannot be half-applied.
 
-**The original is kept first.** Before the first write, the untouched source goes to
-`~/.paseo-voice/patches/<name>.original`. Taking a backup over an already-patched file
-is a mistake this plugin made once; now the backup is only ever taken from a clean
-source. Revert refuses if the stored original is a different size, which means Paseo
-has been updated and the backup no longer fits.
+**The original is kept first.** Before every write, the untouched source goes to
+`~/.paseo-voice/patches/<name>.original`, replacing whatever was there. Writing only
+ever happens onto a clean source, so the backup is always the original of the version
+being patched. Keeping the first backup ever taken was the old rule, and after an
+update it left the previous version's file behind for a revert to write into the new
+archive. Revert still refuses if the stored original is a different size.
+
+**It will not write into an archive Electron checks.** Electron can verify every file
+it reads from `app.asar` against hashes in the header — the
+`EnableEmbeddedAsarIntegrityValidation` fuse. Paseo ships with it off, which is the
+only reason an in-place patch works. The fuse is read from Electron's framework binary
+before every write; with it on, a patched file would stop Paseo from launching at all.
+
+**A bundle that does not parse is not written.** The result is compiled, not run,
+before it replaces the original: a broken bundle is a desktop client that will not
+start.
 
 **Applying needs a restart.** The daemon already has the old code in memory. The panel
 says so when it matters.
@@ -85,10 +96,57 @@ back to the bundle's own bytes if that fails. So:
 It also sets two numbers: the gap between repeats, 350 ms, to zero — it reads as a
 stutter once the cue is music — and the 1500 ms wait before the first play down to
 250 ms. That wait was added upstream so the cue would not fire in the pauses between
-spoken sentences, and the other two corrections here already removed those pauses.
+spoken sentences. Those pauses are still there — the daemon sends the next sentence
+only once the client confirms the last — so on the desktop the cue can sound briefly
+between sentences. The phone build closes that properly, by holding the cue back for
+as long as a `speak` call is in flight (see [ios.md](ios.md)); the desktop is next.
 
 This one is matched by shape rather than by exact text, because the bundle is minified
 and its identifiers change between builds.
+
+## Put back after every update
+
+Paseo updates itself, and an update replaces the files these corrections live in. So
+on every start of the plugin — and every update ends in one — whatever is missing is
+put back, each correction on its own:
+
+- **The two archive files** are written only if their sha256 is on the correction's
+  `verified` list in `server/patches.server.ts` — the upstream versions it was reviewed
+  against. Anchors alone are not enough for this. They only see the lines being
+  replaced, while the replacements lean on names around them: rename
+  `MAX_TTS_SEGMENT_CHARS` or `runSerial` upstream and every anchor still matches, the
+  patch lands, and the daemon throws at the first sentence.
+- **The bundle** cannot have such a list, since every build renames and rehashes it.
+  Its shape is the check, plus the parse above.
+- **Nothing goes into the archive** while the integrity fuse is on.
+
+It only does this if the last thing done by hand was **Наложить**. A fresh install
+patches nothing unasked, and a revert stays a revert across updates.
+
+**Then the daemon is restarted**, since it already holds the old code — but only a
+young one. Under two minutes old, it was just started by the update or by a launch, and
+nothing is running yet for a restart to cut off. An older daemon is somebody's working
+session (a plugin reload after a review, say), so it is left alone and the
+notification asks for a restart instead. At most one automatic restart per Paseo
+version, so corrections that somehow do not stick cannot turn into a loop. Only the
+daemon restarts: the window keeps the bundle it loaded at launch, so on the desktop the
+waiting music comes back with the next launch of the app.
+
+Whatever it will not write is left as it was and reported: in the panel, beside the
+correction; in a macOS notification, once per new thing to say; and in the daemon log.
+A changed archive file is also copied beside its backup as `<name>.pending`, so the
+review is one command:
+
+```sh
+diff -u ~/.paseo-voice/patches/tts-manager.js.original ~/.paseo-voice/patches/tts-manager.js.pending
+```
+
+If the correction still holds, add the new hash to `verified`. If the anchors moved,
+rewrite the splices first. Then `paseo plugin reload voice`, and the next start puts it
+in — or press **Наложить**, which goes by the anchors and trusts you about the rest.
+
+`npm test` says the same thing sooner: one test checks the installed Paseo against the
+`verified` lists and names the hash to add.
 
 ## The two daemon settings
 

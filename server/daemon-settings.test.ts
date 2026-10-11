@@ -180,3 +180,14 @@ test("ours is recognised after an update, before anything is rewritten", async (
   assert.equal(state.foreignPrompt, false);
   void home;
 });
+
+test("the daemon's age is read from every shape ps gives it, and nothing else", async () => {
+  const { secondsOf } = await import("./daemon-settings.server.ts");
+  assert.equal(secondsOf("00:07"), 7);
+  assert.equal(secondsOf("  01:30\n"), 90, "ps pads the column and ends the line");
+  assert.equal(secondsOf("02:00:05"), 7205);
+  assert.equal(secondsOf("01-15:11:23"), 141_083, "days, the shape a long-running daemon has");
+  // Unreadable is null, never zero: zero would pass for a daemon that has just started.
+  assert.equal(secondsOf(""), null);
+  assert.equal(secondsOf("ps: no such process"), null);
+});

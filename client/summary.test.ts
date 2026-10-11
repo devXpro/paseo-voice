@@ -38,7 +38,16 @@ const base: Status = {
   cueVolume: 1,
   cueVolumeMax: 2,
   cueFolder: "/tmp/music",
-  patch: { available: true, applied: true, targets: [], unknownVersion: false, archivePath: "/x", restartRequired: false, error: "" },
+  patch: {
+    available: true,
+    applied: true,
+    targets: [],
+    unknownVersion: false,
+    auto: true,
+    archivePath: "/x",
+    restartRequired: false,
+    error: "",
+  },
   whisper: {
     enginePath: "/opt/homebrew/bin/whisper-server",
     engineInstalled: true,

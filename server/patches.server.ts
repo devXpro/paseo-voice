@@ -1,5 +1,8 @@
-import { mkdir, readdir, readFile, rename, stat, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { mkdir, open, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { homedir } from "node:os";
 import path from "node:path";
+import vm from "node:vm";
 import { type Archive, type Entry, locate, readArchive, readEntry, writeEntry } from "./asar.server.ts";
 import { paths } from "./paths.server.ts";
 
@@ -50,6 +53,13 @@ export type Target = {
   /** A path inside the archive, or a glob under the app's resources for a plain file. */
   entry: string;
   splices: readonly Splice[];
+  /**
+   * The sha256 of every upstream version of the file this correction has been reviewed
+   * against. Only an archive target has one: the bundle is renamed and rehashed by every
+   * build, so for it the shape is the whole check. The automatic run writes nothing into
+   * a file that is not on this list; a person pressing the button still can.
+   */
+  verified?: readonly string[];
 };
 
 const ttsSplices: readonly Splice[] = [
@@ -184,6 +194,8 @@ export const TARGETS: readonly Target[] = [
     kind: "asar",
     entry: "node_modules/@getpaseo/server/dist/server/server/agent/tts-manager.js",
     splices: ttsSplices,
+    // Paseo 0.10.3 and 0.11.1, byte for byte the same file.
+    verified: ["c0175e3a58b1b6076f7792e5480bd9f5a39d3e1b720427833d89e782d60b4508"],
   },
   {
     id: "mute",
@@ -192,6 +204,8 @@ export const TARGETS: readonly Target[] = [
     kind: "asar",
     entry: "node_modules/@getpaseo/server/dist/server/server/session/voice/voice-turn-controller.js",
     splices: muteSplices,
+    // Paseo 0.10.3 and 0.11.1, byte for byte the same file.
+    verified: ["143bec13ce0c86542ede7f943c543cb90e58179e88a56efeacdf2896a8000697"],
   },
   {
     id: "cue",
@@ -256,6 +270,124 @@ export function fit(source: string, target: number): string | null {
   return slack < 0 ? null : text + " ".repeat(slack);
 }
 
+const sha256 = (text: string): string => createHash("sha256").update(text, "utf8").digest("hex");
+
+/**
+ * Compiles without running. A bundle that does not parse is a desktop client that does
+ * not start, and the splices on minified code are the one place a stray brace could
+ * come from; the check costs about a tenth of a second on the 21 MB file.
+ */
+function parses(text: string): boolean {
+  try {
+    new vm.Script(text);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** What one correction calls for, given the file it would go into. */
+export type Verdict =
+  | { kind: "in-place" }
+  | { kind: "write"; text: string }
+  | { kind: "unverified"; sha: string; anchorsFit: boolean }
+  | { kind: "refused"; why: string };
+
+/**
+ * The whole decision, pure so that it can be proved.
+ *
+ * `auto` adds the one check a person at the button does not need: the file must be an
+ * upstream version this correction was reviewed against. Anchors only see the lines
+ * being replaced, while the replacements lean on names around them —
+ * `MAX_TTS_SEGMENT_CHARS`, `runSerial`, `params.logger`. Rename one upstream and every
+ * anchor still matches, the patch still lands, and the daemon meets a ReferenceError at
+ * the first sentence; in the mute correction's case inside a timer callback, with
+ * nothing around it to catch the throw. A hash notices any change at all. The price is
+ * an alarm about a change that turns out harmless, which costs one look at a diff.
+ */
+export function judge(target: Target, source: { text: string; size: number }, auto: boolean): Verdict {
+  const outcome = patchSource(source.text, target.splices);
+  if (!outcome.ok && outcome.reason === "already-patched") {
+    return { kind: "in-place" };
+  }
+  if (auto && target.verified) {
+    const sha = sha256(source.text);
+    if (!target.verified.includes(sha)) {
+      return { kind: "unverified", sha, anchorsFit: outcome.ok };
+    }
+  }
+  if (!outcome.ok) {
+    return { kind: "refused", why: "незнакомая версия Paseo — якоря не совпали" };
+  }
+  if (target.kind === "file") {
+    return parses(outcome.text)
+      ? { kind: "write", text: outcome.text }
+      : { kind: "refused", why: "после правки бандл не разбирается — с ним Paseo не запустится" };
+  }
+  const fitted = fit(outcome.text, source.size);
+  return fitted === null
+    ? { kind: "refused", why: "правка не влезает в исходный размер" }
+    : { kind: "write", text: fitted };
+}
+
+/**
+ * Electron can check every file it reads out of the archive against hashes kept in its
+ * header. Paseo ships with that fuse off, which is the only reason a patch written in
+ * place works at all. With it on, the first read of a patched file kills the app at
+ * launch — and an automatic run would do the same again after every reinstall.
+ */
+const FUSE_SENTINEL = Buffer.from("dL7pKGdnNz796PbbjQWNKmHXBZaB9tsX");
+/** `EnableEmbeddedAsarIntegrityValidation`, by its place on the wire. */
+const ASAR_INTEGRITY_FUSE = 4;
+
+/**
+ * Reads the fuse off the wire that follows the sentinel: a version byte, a length byte,
+ * then one byte per fuse — "1" on, "0" off, "r" removed. Null when the window does not
+ * hold the whole wire, so a wire cut by a read boundary is never mistaken for "off".
+ */
+export function asarIntegrityOn(window: Buffer): boolean | null {
+  const at = window.indexOf(FUSE_SENTINEL);
+  const wire = at + FUSE_SENTINEL.length + 2;
+  if (at === -1 || wire + ASAR_INTEGRITY_FUSE >= window.length) {
+    return null;
+  }
+  if ((window[wire - 1] ?? 0) <= ASAR_INTEGRITY_FUSE) {
+    return null;
+  }
+  return window[wire + ASAR_INTEGRITY_FUSE] === "1".charCodeAt(0);
+}
+
+/** The framework binary is 190 MB, so it is searched in slices rather than read whole. */
+async function asarIntegrityEnforced(archivePath: string): Promise<boolean> {
+  const binary = path.join(
+    path.dirname(archivePath),
+    "..",
+    "Frameworks",
+    "Electron Framework.framework",
+    "Electron Framework",
+  );
+  const handle = await open(binary, "r");
+  try {
+    const slice = Buffer.alloc(8 * 1024 * 1024);
+    // Each slice repeats the end of the one before, so the sentinel and its wire are
+    // whole in at least one of them.
+    const overlap = 256;
+    for (let position = 0; ; position += slice.length - overlap) {
+      const { bytesRead } = await handle.read(slice, 0, slice.length, position);
+      const on = asarIntegrityOn(slice.subarray(0, bytesRead));
+      if (on !== null) {
+        return on;
+      }
+      if (bytesRead < slice.length) {
+        break;
+      }
+    }
+  } finally {
+    await handle.close();
+  }
+  throw new Error("не нашёл предохранители Electron — не могу проверить, что Paseo разрешает правки в app.asar");
+}
+
 export type TargetState = {
   id: string;
   title: string;
@@ -263,6 +395,8 @@ export type TargetState = {
   applied: boolean;
   /** The file is there but its shape has changed — a Paseo this plugin does not know. */
   unknownVersion: boolean;
+  /** What the last automatic run could not do with it, in a sentence; empty when nothing. */
+  alert: string;
 };
 
 export type PatchState = {
@@ -271,6 +405,8 @@ export type PatchState = {
   /** Every correction is in place. */
   applied: boolean;
   unknownVersion: boolean;
+  /** Puts the corrections back by itself after an update; off until applied by hand. */
+  auto: boolean;
   archivePath: string;
   /** Set after applying or reverting: the daemon already has the old code in memory. */
   restartRequired: boolean;
@@ -354,7 +490,98 @@ async function textOf(archive: Archive, target: Target): Promise<{ text: string;
   return { text: (await readEntry(archive.path, entry)).toString("utf8"), size: entry.size };
 }
 
+/** Where a changed upstream file is put, for a person to diff against the original. */
+async function pendingOf(target: Target): Promise<string> {
+  return (await backupOf(target)).replace(/\.original$/, ".pending");
+}
+
+/** Paseo's version, for messages; read from the archive so it is the one on disk. */
+async function versionOf(archive: Archive): Promise<string> {
+  const entry = locate(archive, "package.json");
+  try {
+    return entry ? String(JSON.parse((await readEntry(archive.path, entry)).toString("utf8")).version) : "?";
+  } catch {
+    return "?";
+  }
+}
+
+/** Kept beside the backups the automatic run depends on. */
+const autoFile = path.join(paths.root, "patches", "auto.json");
+
+type AutoState = {
+  /**
+   * The last thing done by hand. Only "applied" lets the plugin write on its own: a
+   * fresh install does not patch anybody's Paseo unasked, and a revert stays a revert
+   * across updates.
+   */
+  intent: "applied" | "reverted" | null;
+  /** What the last alert said, so the next start does not raise the same one again. */
+  alerted: string;
+  /**
+   * The Paseo version a restart was last due for, whether or not the daemon was young
+   * enough to take it. One per version, so corrections that somehow do not stick cannot
+   * become a restart loop.
+   */
+  restarted: string;
+};
+
+const NO_AUTO: AutoState = { intent: null, alerted: "", restarted: "" };
+
+async function readAuto(): Promise<AutoState> {
+  try {
+    return { ...NO_AUTO, ...(JSON.parse(await readFile(autoFile, "utf8")) as Partial<AutoState>) };
+  } catch {
+    return NO_AUTO;
+  }
+}
+
+async function writeAuto(next: Partial<AutoState>): Promise<void> {
+  const merged = { ...(await readAuto()), ...next };
+  await mkdir(path.dirname(autoFile), { recursive: true });
+  await writeFile(autoFile, `${JSON.stringify(merged, null, 2)}\n`, { mode: 0o600 });
+}
+
+/** Writes one correction a verdict allowed, keeping the original it replaces. */
+async function write(archive: Archive, target: Target, original: string, text: string): Promise<void> {
+  if (target.kind === "asar" && (await asarIntegrityEnforced(archive.path))) {
+    throw new Error("Paseo включил проверку целостности app.asar — с правкой внутри он не запустится");
+  }
+
+  // Rewritten before every write rather than kept from the first: this only ever runs
+  // on a clean source, since `patchSource` refuses a patched one, so what lands here is
+  // always the original of the version being patched. Keeping the first backup ever
+  // taken was the old rule, and after an update it left the previous version's file
+  // here — which a revert would then have written into the new archive.
+  const backup = await backupOf(target);
+  const dir = path.dirname(backup);
+  await mkdir(dir, { recursive: true });
+  await writeFile(backup, original, { mode: 0o600 });
+  await rm(await pendingOf(target), { force: true });
+
+  if (target.kind === "file") {
+    // The bundle is renamed by every build and so is its backup; the old ones belong to
+    // bundles that no longer exist, at 21 MB apiece.
+    const [prefix = "", suffix = ""] = path.basename(target.entry).split("*");
+    for (const name of await readdir(dir)) {
+      if (name.startsWith(prefix) && name.endsWith(`${suffix}.original`) && path.join(dir, name) !== backup) {
+        await rm(path.join(dir, name), { force: true });
+      }
+    }
+    const file = await fileOf(target);
+    // Staged and renamed: a half-written bundle is a client that will not start.
+    const staged = `${file}.voice-plugin.tmp`;
+    await writeFile(staged, text);
+    await rename(staged, file);
+    return;
+  }
+
+  await writeEntry(archive.path, locate(archive, target.entry)!, Buffer.from(text, "utf8"));
+}
+
 let restartRequired = false;
+
+/** What the last automatic run made of each correction, until something done by hand supersedes it. */
+let lastAuto: AutoReport | null = null;
 
 /**
  * What `inspect` may remember between calls.
@@ -398,21 +625,34 @@ async function fingerprint(): Promise<string> {
   return fingerprintOf(files);
 }
 
+/**
+ * This plugin's own memory, laid over what was read off the disk rather than remembered
+ * with it: the restart flag, the switch, and what the last automatic run had to say.
+ */
+async function overlaid(state: PatchState): Promise<PatchState> {
+  const alerts = lastAuto?.alerts ?? [];
+  return {
+    ...state,
+    restartRequired,
+    auto: (await readAuto()).intent === "applied",
+    targets: state.targets.map((one) => ({ ...one, alert: alerts.find((a) => a.id === one.id)?.text ?? "" })),
+  };
+}
+
 export async function inspect(): Promise<PatchState> {
   const blank: PatchState = {
     available: false,
     applied: false,
     unknownVersion: false,
+    auto: false,
     archivePath: "",
     restartRequired,
     targets: [],
     error: "",
   };
   const of = await fingerprint();
-  // `restartRequired` is this plugin's own flag, not something read off the disk, so it
-  // is laid over the remembered answer rather than remembered with it.
   if (remembered?.of === of) {
-    return { ...remembered.state, restartRequired };
+    return overlaid(remembered.state);
   }
   try {
     const archive = await located();
@@ -423,7 +663,14 @@ export async function inspect(): Promise<PatchState> {
     for (const target of TARGETS) {
       const source = await textOf(archive, target);
       if (!source) {
-        targets.push({ id: target.id, title: target.title, note: target.note, applied: false, unknownVersion: true });
+        targets.push({
+          id: target.id,
+          title: target.title,
+          note: target.note,
+          applied: false,
+          unknownVersion: true,
+          alert: "",
+        });
         continue;
       }
       const outcome = patchSource(source.text, target.splices);
@@ -433,6 +680,7 @@ export async function inspect(): Promise<PatchState> {
         note: target.note,
         applied: !outcome.ok && outcome.reason === "already-patched",
         unknownVersion: !outcome.ok && outcome.reason === "unknown-version",
+        alert: "",
       });
     }
     const state: PatchState = {
@@ -446,7 +694,7 @@ export async function inspect(): Promise<PatchState> {
     // Only a complete answer is kept. A failure can be a half-written file during a
     // Paseo update, and remembering that would outlast the update.
     remembered = { of, state };
-    return state;
+    return overlaid(state);
   } catch (failure) {
     return { ...blank, error: failure instanceof Error ? failure.message : String(failure) };
   }
@@ -468,39 +716,17 @@ export async function apply(): Promise<void> {
     if (!source) {
       throw new Error(`${target.title}: файл не найден — Paseo обновился`);
     }
-    const outcome = patchSource(source.text, target.splices);
-    if (!outcome.ok) {
-      if (outcome.reason === "already-patched") {
-        continue;
-      }
-      throw new Error(`${target.title}: незнакомая версия Paseo — якоря не совпали`);
+    const verdict = judge(target, source, false);
+    if (verdict.kind === "refused") {
+      throw new Error(`${target.title}: ${verdict.why}`);
     }
-
-    // Kept before the first write only: a backup taken over a patched file is useless,
-    // which is a mistake this plugin has already made once.
-    const backup = await backupOf(target);
-    await mkdir(path.dirname(backup), { recursive: true });
-    try {
-      await readFile(backup);
-    } catch {
-      await writeFile(backup, source.text, { mode: 0o600 });
+    if (verdict.kind === "write") {
+      await write(archive, target, source.text, verdict.text);
     }
-
-    if (target.kind === "file") {
-      const file = await fileOf(target);
-      // Staged and renamed: a half-written bundle is a client that will not start.
-      const staged = `${file}.voice-plugin.tmp`;
-      await writeFile(staged, outcome.text);
-      await rename(staged, file);
-      continue;
-    }
-
-    const fitted = fit(outcome.text, source.size);
-    if (fitted === null) {
-      throw new Error(`${target.title}: правка не влезает в исходный размер`);
-    }
-    await writeEntry(archive.path, locate(archive, target.entry)!, Buffer.from(fitted, "utf8"));
   }
+  // Done by hand, so it is what this person wants after the next update as well.
+  await writeAuto({ intent: "applied" });
+  lastAuto = null;
   remembered = null;
   restartRequired = true;
 }
@@ -537,6 +763,103 @@ export async function revert(): Promise<void> {
     }
     await writeEntry(archive.path, entry, Buffer.from(original, "utf8"));
   }
+  // A revert by hand is a decision, and it has to outlast the next update.
+  await writeAuto({ intent: "reverted" });
+  lastAuto = null;
   remembered = null;
   restartRequired = true;
+}
+
+export type AutoReport = {
+  version: string;
+  /** The ids written on this run. */
+  written: string[];
+  /** Something went into the archive, which the daemon only reads at start. */
+  archived: boolean;
+  /** …and the daemon has not been restarted for this version yet. */
+  restart: boolean;
+  /** One sentence for each correction that needs a person. */
+  alerts: { id: string; title: string; text: string }[];
+  /** These alerts differ from the last ones raised, so they are worth a notification. */
+  fresh: boolean;
+};
+
+/**
+ * Run at every start of the plugin, which every Paseo update causes, since it ends in
+ * a restart. An update replaces the files the corrections live in, so this is where
+ * they come back: onto files they were reviewed against, and nowhere else. Anything
+ * else is left as it is and reported, for a person to read the diff and then either
+ * add the hash or rewrite the correction.
+ *
+ * Null when it is not this plugin's place to write at all; see `AutoState.intent`.
+ */
+export async function autoApply(): Promise<AutoReport | null> {
+  const state = await readAuto();
+  if (state.intent !== "applied") {
+    return null;
+  }
+  const archive = await located();
+  if (!archive) {
+    // No archive carrying the corrected files is the loudest change there is — the code
+    // moved — so it is reported like the rest rather than thrown into a log.
+    const text = "не нашёл app.asar с файлами, которые правятся — Paseo переложил код или стоит не там";
+    return settled(state, {
+      version: "?",
+      written: [],
+      archived: false,
+      restart: false,
+      alerts: [{ id: "archive", title: "Архив Paseo", text }],
+      fresh: false,
+    });
+  }
+  const version = await versionOf(archive);
+  const report: AutoReport = { version, written: [], archived: false, restart: false, alerts: [], fresh: false };
+  const shown = (file: string) => file.replace(homedir(), "~");
+
+  // Each on its own: a correction that cannot go in is no reason to leave out the ones
+  // that can.
+  for (const target of TARGETS) {
+    const alert = (text: string) => report.alerts.push({ id: target.id, title: target.title, text });
+    try {
+      const source = await textOf(archive, target);
+      if (!source) {
+        alert(`в Paseo ${version} нет файла, в который она ложится`);
+        continue;
+      }
+      const verdict = judge(target, source, true);
+      if (verdict.kind === "write") {
+        await write(archive, target, source.text, verdict.text);
+        report.written.push(target.id);
+        report.archived ||= target.kind === "asar";
+      } else if (verdict.kind === "refused") {
+        alert(verdict.why);
+      } else if (verdict.kind === "unverified") {
+        const pending = await pendingOf(target);
+        await writeFile(pending, source.text, { mode: 0o600 });
+        const diff = `diff -u ${shown(await backupOf(target))} ${shown(pending)}`;
+        alert(
+          verdict.anchorsFit
+            ? `Paseo ${version} изменил файл, якоря совпадают. Проверь: ${diff} — если правка по-прежнему верна, добавь в verified ${verdict.sha}`
+            : `Paseo ${version} изменил файл, якоря не совпадают — правку надо переписать. Что поменялось: ${diff}`,
+        );
+      }
+    } catch (failure) {
+      alert(failure instanceof Error ? failure.message : String(failure));
+    }
+  }
+  return settled(state, report);
+}
+
+/** Remembers what a run found, and decides whether it is news worth a notification. */
+async function settled(state: AutoState, report: AutoReport): Promise<AutoReport> {
+  if (report.written.length > 0) {
+    remembered = null;
+    restartRequired = true;
+  }
+  const said = report.alerts.map((one) => `${one.id}: ${one.text}`).join("\n");
+  report.fresh = said !== "" && said !== state.alerted;
+  report.restart = report.archived && state.restarted !== report.version;
+  await writeAuto({ alerted: said, restarted: report.restart ? report.version : state.restarted });
+  lastAuto = report;
+  return report;
 }

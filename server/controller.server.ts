@@ -6,18 +6,26 @@ import { installedRelease } from "./binary.server.ts";
 import { isDictationWired, isWired, wire, wireDictation as writeDictation } from "./config.server.ts";
 import {
   DEFAULT_PROMPT,
+  daemonUptime,
   disable as disableDaemonSpeech,
   enable as enableDaemonSpeech,
   inspect as inspectSettings,
   reloadDaemon,
   replacePrompt,
+  restartDaemon,
 } from "./daemon-settings.server.ts";
 import type { Engine } from "./engine.server.ts";
 import { folder as cueFolder, list as listCues } from "./cue.server.ts";
 import { type GoogleVoice, hintOf, listVoices, readKey, writeKey } from "./google.server.ts";
 import { paths } from "./paths.server.ts";
 import { asPrompt, mine } from "./vocabulary.server.ts";
-import { apply as applyPatches, inspect as inspectPatches, revert as revertPatches } from "./patches.server.ts";
+import { notify } from "./notify.server.ts";
+import {
+  apply as applyPatches,
+  autoApply as autoApplyPatches,
+  inspect as inspectPatches,
+  revert as revertPatches,
+} from "./patches.server.ts";
 import { clampVolume, clampRate, RATE_MAX, VOLUME_MAX, RATE_MIN, readStored, type Stored, writeStored } from "./state.server.ts";
 import { resetsAt, summary } from "./usage.server.ts";
 import {
@@ -66,12 +74,19 @@ export type Controller = {
   recogniserState(): { port: number; running: boolean };
   /** Brings the engine back if the config says dictation goes through this plugin. */
   resumeDictation(): Promise<void>;
+  /** Stops the dictation engine with the plugin; `resumeDictation` brings it back. */
+  stopRecogniser(): void;
+  /** Puts the corrections back after a Paseo update, or says loudly why it could not. */
+  autoPatch(): Promise<void>;
   /** The live choice the proxy reads on every sentence. */
   choice(): Promise<Stored & { googleKey: string }>;
 };
 
 /** The local engine binary published for this platform is macOS on Apple silicon only. */
 const localSupported = process.platform === "darwin" && process.arch === "arm64";
+
+/** Younger than this, a daemon was started by an update or a launch and is nobody's session yet. */
+const FRESH_DAEMON_SECONDS = 120;
 
 async function installedModels(): Promise<{ id: string; label: string; installed: boolean; onDisk: number }[]> {
   const known = [LOCAL_MODEL, { id: "0.6b-customvoice", label: "0.6B CustomVoice" }];
@@ -587,8 +602,80 @@ export function createController(options: {
       }
     },
 
+    /**
+     * Called on start. Every Paseo update ends in one and replaces the files the
+     * corrections live in, so this is where they come back — or where somebody hears,
+     * once per new thing to say, that they could not.
+     */
+    async autoPatch() {
+      let report: Awaited<ReturnType<typeof autoApplyPatches>>;
+      try {
+        report = await autoApplyPatches();
+      } catch (failure) {
+        // The run itself broke. Quiet here would read as "nothing to put back" after
+        // every update from now on, which is the one outcome worse than an alarm.
+        const message = failure instanceof Error ? failure.message : String(failure);
+        log(`voice: auto-patch failed: ${message}`);
+        await notify("Paseo Voice: автоналожение сломалось", message).catch(() => {});
+        return;
+      }
+      if (!report) {
+        return;
+      }
+      for (const id of report.written) {
+        log(`voice: auto-patch: ${id} written onto Paseo ${report.version}`);
+      }
+      for (const one of report.alerts) {
+        log(`voice: auto-patch: ${one.id} left alone: ${one.text}`);
+      }
+      if (report.fresh) {
+        const which = report.alerts.map((one) => `«${one.title}»`).join(", ");
+        await notify("Paseo Voice: патч не лёг", `Paseo ${report.version}: ${which}. Подробности в разделе «Патч Paseo».`).catch(
+          (failure: unknown) => log(`voice: notification failed: ${String(failure)}`),
+        );
+      }
+
+      if (report.written.length === 0) {
+        return;
+      }
+      const music = report.written.includes("cue") ? " Музыка ожидания на десктопе — со следующего запуска приложения." : "";
+      const told = (text: string) =>
+        notify("Paseo Voice: правки вернулись", `Paseo ${report.version}: ${text}${music}`).catch((failure: unknown) =>
+          log(`voice: notification failed: ${String(failure)}`),
+        );
+      if (!report.archived) {
+        // Only the bundle, which the window reads; the daemon has nothing new to load.
+        await told("правка наложена.");
+        return;
+      }
+      // A daemon this young was just started by an update or a launch, so no turn is
+      // running yet for a restart to cut off. An older one is somebody's working session
+      // — a plugin reload after a review, say — and when to restart it is theirs to say.
+      const uptime = await daemonUptime();
+      if (report.restart && uptime !== null && uptime < FRESH_DAEMON_SECONDS) {
+        try {
+          restartDaemon(path.join(paths.root, "restart.log"));
+          log(`voice: auto-patch: restarting the daemon, up ${uptime} s, to load the corrections`);
+          await told("правки наложены, демон перезапускается.");
+          return;
+        } catch (failure) {
+          log(`voice: auto-patch: could not restart the daemon: ${String(failure)}`);
+        }
+      }
+      await told("правки наложены — заработают после перезапуска Paseo.");
+    },
+
     markBinaryChanged() {
       binaryRelease = null;
+    },
+
+    /**
+     * A child the plugin does not stop outlives it: launchd adopts it, and it keeps the
+     * model in memory and the port bound. Every plugin reload and every daemon restart
+     * used to leave one behind — 1.6 GB apiece with Large v3 Turbo.
+     */
+    stopRecogniser() {
+      recogniser.stop();
     },
   };
 }
