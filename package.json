@@ -23,7 +23,9 @@
   "type": "module",
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "node --test"
+    "test": "node --test",
+    "e2e": "node --import ./e2e/harness/register.ts --test --test-force-exit --test-concurrency=1 'e2e/**/*.e2e.ts'",
+    "e2e:live": "node --env-file-if-exists=.env.e2e --import ./e2e/harness/register.ts --test --test-force-exit --test-concurrency=1 'e2e/live/*.live.ts'"
   },
   "devDependencies": {
     "@getpaseo/plugin": "0.10.3",

@@ -60,7 +60,7 @@ documentation that cannot go stale without going red.
 
 ## What the tests cover
 
-79 of them, all `node:test`, no framework and no mocking library.
+99 of them, all `node:test`, no framework and no mocking library.
 
 The ones worth knowing about:
 
@@ -69,11 +69,17 @@ The ones worth knowing about:
   valid data — this test is what pins that down.
 - `patches.test.ts` carries the real shape of the functions being corrected, as Paseo
   compiles them, and proves that a missing anchor and a doubled anchor are both
-  refusals rather than guesses.
+  refusals rather than guesses. It also checks the installed Paseo against the
+  `verified` hashes, so an update that changed a corrected file fails here first.
 - `pcm.test.ts` measures the low-pass rather than trusting it.
 - `usage.test.ts` covers the billing arithmetic, including the month boundary.
 
 There is no test that needs a Google key or a network.
+
+**End to end**, the phone's own voice code runs against a simulated daemon
+(`npm run e2e`) and against the real one through the relay (`npm run e2e:live`). Those
+need the patched iOS checkout and are kept out of `npm test`; see
+[e2e/README.md](../e2e/README.md).
 
 ## Things known and not done
 

@@ -33,6 +33,22 @@ And Paseo splits on every full stop without merging, so each fragment is its own
 request and its own round trip. **Читать звук сразу** merges up to the 260-character
 limit Paseo already defines.
 
+## An answer stops halfway, and music plays where the rest should be
+
+A phone app built on Paseo 0.10 with this plugin's corrections. Its audio engine played
+a cue that had been stopped while its bytes were still on their way — over the sentence
+that came next, whose end it then lost track of — so that sentence was never confirmed
+and the daemon waited for it with no limit. Paseo 0.11 rebuilt the engine and the bug
+is gone with it: rebuild the app with `ios-build/build.sh` on 0.11 or later.
+`npm run e2e:live` reproduced it on 0.10, and shows it gone; see [e2e.md](e2e.md).
+
+## The music comes in between sentences, or after the last one
+
+On the phone, an app built before the correction that holds the cue back while the
+agent speaks — rebuild it. On the desktop it is still so: the desktop correction
+shortens the wait before the cue, and holding it back for a whole `speak` call is, so
+far, the phone build's alone. See [ios.md](ios.md#the-corrections-it-applies).
+
 ## Every sentence sounds like a different person
 
 **Ровный тон**, on the local engine. The engine seeds itself from the clock and Paseo
@@ -64,6 +80,16 @@ Paseo was updated after the patch was applied. The kept original belongs to the 
 version and writing it back would corrupt the archive, so it refuses. Reinstall Paseo
 to get a clean copy.
 
+## The corrections were not put back after a Paseo update
+
+The panel says why, beside each correction, and a macOS notification said it once.
+Usually the update changed a file a correction goes into, and it is left alone until
+somebody looks: `diff -u` the original kept in `~/.paseo-voice/patches/` against the
+`.pending` copy beside it, then add the hash or rewrite the correction —
+[patches.md](patches.md#put-back-after-every-update) has the procedure.
+
+A correction reverted by hand is never put back: the last thing done by hand wins.
+
 ## The phone pairs and then drops out after about ten seconds
 
 A version mismatch between the app and the daemon, not a network problem. The client
@@ -82,6 +108,18 @@ It was built as Debug, which produces a dev client that looks for a Metro server
 ## The app stopped launching after a week
 
 A free Apple ID signs for seven days. Run `ios-build/build.sh` again.
+
+## `build.sh` ends in an error at 7/7 with no phone attached
+
+The build succeeded — `BUILD SUCCEEDED` is in `~/.paseo-voice/ios-build/xcodebuild.log`,
+and the app is under `~/.paseo-voice/ios-build/derived/Build/Products/Release-iphoneos/`.
+Only the last step failed: it looks for a connected phone and stops on finding none. A
+phone already paired with Xcode takes the app over the network:
+
+```sh
+xcrun devicectl list devices
+xcrun devicectl device install app --device <UDID> <path to PaseoDebug.app>
+```
 
 ## The music is a twenty-second loop instead of the whole track
 
