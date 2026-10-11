@@ -146,6 +146,13 @@ grep -a '"pluginId":"voice"' ~/.paseo/daemon.log | grep -i 'не скачало�
 On the desktop it should not: the volume is read on every repeat. On the phone the
 level is compiled in, so it needs a rebuild.
 
+## «Собрать из моих переписок» finds hardly any words
+
+It reads what you typed and dictated to Claude Code, from `projects/` under each Claude
+config directory: `~/.claude`, and the one `CLAUDE_CONFIG_DIR` names — which is usually
+set for your shell and not for the plugin, since Paseo starts it. List any other config
+directories in `~/.paseo-voice/claude-dirs`, one per line.
+
 ## Nothing in the panel reacts
 
 Check the daemon log rather than the screen — the error card in the interface is

@@ -1,6 +1,7 @@
 import { readdir, readFile, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
+import { paths } from "./paths.server.ts";
 
 /**
  * The words somebody actually says, mined from their own transcripts.
@@ -15,11 +16,22 @@ import path from "node:path";
  * those in biases the recogniser towards prose it will never hear.
  */
 
-/** Where Claude keeps per-project transcripts, under whichever config root is in use. */
-const ROOTS = [
-  path.join(homedir(), ".claude", "projects"),
-  path.join(homedir(), "projects", "jobby-jobs", ".claude-data", "projects"),
-];
+/** Claude config directories listed by hand, one per line: those this process cannot see. */
+const LISTED = path.join(paths.root, "claude-dirs");
+
+/**
+ * Where Claude keeps per-project transcripts: `projects/` under every config directory
+ * in use. The default one, the one `CLAUDE_CONFIG_DIR` names — set for the shell, so
+ * usually not for this process, which Paseo starts — and any listed in `LISTED`.
+ */
+async function roots(): Promise<string[]> {
+  const listed = (await readFile(LISTED, "utf8").catch(() => ""))
+    .split("\n")
+    .map((line) => line.trim().replace(/^~(?=\/|$)/, homedir()))
+    .filter(Boolean);
+  const dirs = [path.join(homedir(), ".claude"), process.env.CLAUDE_CONFIG_DIR ?? "", ...listed];
+  return [...new Set(dirs.filter(Boolean).map((dir) => path.join(dir, "projects")))];
+}
 
 /** Bounded so a long history does not turn a button press into a minute of reading. */
 const MAX_FILES = 60;
@@ -113,7 +125,7 @@ function textOf(content: unknown): string {
 /** Newest first: how somebody speaks this month beats how they spoke in the spring. */
 async function transcripts(): Promise<string[]> {
   const found: { file: string; at: number }[] = [];
-  for (const root of ROOTS) {
+  for (const root of await roots()) {
     let projects: string[];
     try {
       projects = await readdir(root);
