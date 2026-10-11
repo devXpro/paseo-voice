@@ -435,6 +435,237 @@ await splice(
   "speak calls reach the runtime",
 );
 
+/**
+ * 8. The microphone goes up as Opus, in voice mode and in dictation.
+ *
+ * The microphone streams to the daemon for as long as voice mode is on and unmuted, and
+ * for the whole of a dictation: 16 kHz PCM, about 340 kbit/s once it is base64 — more
+ * than a weak mobile uplink carries, and then nothing said gets through. Opus at 24
+ * kbit/s is a tenth of it, and iOS encodes it itself (AudioToolbox), so nothing is linked
+ * into the app.
+ *
+ * One module does it for both, `src/audio/opus-uplink.ts`, written here from
+ * `ios-build/opus/`: it asks this plugin whether the daemon can take Opus — yes only when
+ * the plugin's corrections that decode it are loaded in the daemon running now — and
+ * packs the microphone's PCM accordingly. Anything else, and it is PCM, as upstream sends
+ * it. Around it: the encoder in the native module, one per stream, with its bindings; and
+ * the two places that send the microphone, which now go through the module.
+ */
+const twoWayAudio = (...parts) => path.join(checkout, "packages/expo-two-way-audio", ...parts);
+await writeFile(
+  twoWayAudio("ios/VoiceOpusEncoder.swift"),
+  await readFile(new URL("./opus/VoiceOpusEncoder.swift", import.meta.url), "utf8"),
+);
+console.log("  ✓ the Opus encoder is in the native module");
+await writeFile(app("src/audio/opus-uplink.ts"), await readFile(new URL("./opus/opus-uplink.ts", import.meta.url), "utf8"));
+console.log("  ✓ the app has the shared Opus uplink");
+
+await splice(
+  twoWayAudio("ios/ExpoTwoWayAudioModule.swift"),
+  `    private var audioEngine: AudioEngine?`,
+  `    private var audioEngine: AudioEngine?
+    // paseo-voice: one Opus stream per use of the microphone; see VoiceOpusEncoder.
+    private var voiceEncoders: [String: VoiceOpusEncoder] = [:]`,
+  "the native module keeps Opus encoders",
+);
+
+await splice(
+  twoWayAudio("ios/ExpoTwoWayAudioModule.swift"),
+  `        Function("playPCMData") { (pcmData: Data) in
+            self.audioEngine?.playPCMData(pcmData)
+        }`,
+  `        Function("playPCMData") { (pcmData: Data) in
+            self.audioEngine?.playPCMData(pcmData)
+        }
+
+        // paseo-voice: the microphone's PCM as Opus for the daemon; nil when this phone
+        // cannot encode it, and PCM goes instead.
+        Function("encodeOpus") { (stream: String, pcm: Data) -> Data? in
+            if self.voiceEncoders[stream] == nil {
+                self.voiceEncoders[stream] = VoiceOpusEncoder()
+            }
+            return self.voiceEncoders[stream]?.encode(pcm)
+        }
+
+        Function("resetOpusEncoder") { (stream: String) in
+            self.voiceEncoders[stream] = nil
+        }`,
+  "the native module can encode Opus",
+);
+
+await splice(
+  twoWayAudio("src/core.ts"),
+  `export function playPCMData(audioData: Uint8Array) {
+  return ExpoTwoWayAudioModule.playPCMData(audioData);
+}`,
+  `export function playPCMData(audioData: Uint8Array) {
+  return ExpoTwoWayAudioModule.playPCMData(audioData);
+}
+
+/** paseo-voice: 16 kHz PCM16 in, length-prefixed Opus packets out — empty while less than
+ *  one packet has built up, null when the encoder failed. One encoder per stream. */
+export function encodeOpus(stream: string, pcm: Uint8Array): Uint8Array | null {
+  return ExpoTwoWayAudioModule.encodeOpus(stream, pcm);
+}
+
+/** paseo-voice: the stream's next packet starts a new Opus stream. */
+export function resetOpusEncoder(stream: string): void {
+  ExpoTwoWayAudioModule.resetOpusEncoder(stream);
+}`,
+  "the Opus encoder has JS bindings",
+);
+
+await splice(
+  app("src/voice/voice-runtime.ts"),
+  `import type { AudioEngine } from "@/audio";`,
+  `import type { AudioEngine } from "@/audio";
+import { createOpusUplink } from "@/audio/opus-uplink";`,
+  "the runtime has the Opus uplink",
+);
+
+await splice(
+  app("src/voice/voice-runtime.ts"),
+  `  fetchCue?(have: string): Promise<{ tag: string; unchanged: boolean; pcmBase64: string } | null>;
+}`,
+  `  fetchCue?(have: string): Promise<{ tag: string; unchanged: boolean; pcmBase64: string } | null>;
+  /** paseo-voice: whether the daemon takes the microphone as Opus; null when it cannot say. */
+  fetchVoiceCodec?(): Promise<{ opus: boolean } | null>;
+}`,
+  "the adapter can be asked about Opus",
+);
+
+await splice(
+  app("src/voice/voice-runtime.ts"),
+  `  const uploader: ContinuousVoiceUploader = {`,
+  `  // paseo-voice: the microphone goes as Opus once the daemon says it takes it — asked at
+  // every voice start and reconnect, PCM until then.
+  const voiceUplink = createOpusUplink("voice");
+  let voiceCodecAsked = 0;
+  function refreshVoiceCodec(): void {
+    voiceUplink.reset(false);
+    const asked = ++voiceCodecAsked;
+    const ask = getActiveSession()?.adapter.fetchVoiceCodec;
+    if (!ask) {
+      return;
+    }
+    void Promise.resolve(ask())
+      .then((answer) => {
+        if (asked === voiceCodecAsked && answer?.opus) {
+          voiceUplink.reset(true);
+        }
+      })
+      .catch(() => {
+        // No plugin, or an older one: PCM, as upstream sends it.
+      });
+  }
+
+  const uploader: ContinuousVoiceUploader = {`,
+  "the runtime asks whether to send Opus",
+);
+
+await splice(
+  app("src/voice/voice-runtime.ts"),
+  `      const base64 = Buffer.from(chunk).toString("base64");
+
+      void activeSession.adapter.sendVoiceAudioChunk(base64, PCM_MIME_TYPE).catch((error) => {`,
+  `      // paseo-voice: Opus when the daemon takes it; nothing yet while under one packet.
+      const packed = voiceUplink.pack(chunk);
+      if (packed.audio.byteLength === 0) {
+        return;
+      }
+      const base64 = Buffer.from(packed.audio).toString("base64");
+
+      void activeSession.adapter.sendVoiceAudioChunk(base64, packed.format).catch((error) => {`,
+  "the microphone goes up as Opus when it may",
+);
+
+await splice(
+  app("src/voice/voice-runtime.ts"),
+  `        state.transportReady = true;
+        state.turnInProgress = false;
+        uploader.reset();`,
+  `        state.transportReady = true;
+        state.turnInProgress = false;
+        uploader.reset();
+        refreshVoiceCodec();`,
+  "a voice start asks about Opus",
+);
+
+await splice(
+  app("src/voice/voice-runtime.ts"),
+  `      await activeSession.adapter.setVoiceMode(true, state.snapshot.activeAgentId);
+      state.transportReady = true;`,
+  `      await activeSession.adapter.setVoiceMode(true, state.snapshot.activeAgentId);
+      state.transportReady = true;
+      // paseo-voice: a reconnect may be to a daemon that has since been restarted.
+      refreshVoiceCodec();`,
+  "a reconnect asks about Opus again",
+);
+
+await splice(
+  app("src/contexts/session-context.tsx"),
+  `import { isSpeakToolName } from "@getpaseo/protocol/tool-name-normalization";`,
+  `import { isSpeakToolName } from "@getpaseo/protocol/tool-name-normalization";
+import { daemonTakesOpus } from "@/audio/opus-uplink";`,
+  "the session context can ask about Opus",
+);
+
+await splice(
+  app("src/contexts/session-context.tsx"),
+  `        return { tag: answer.tag, unchanged: answer.unchanged === true, pcmBase64: answer.pcmBase64 ?? "" };
+      },`,
+  `        return { tag: answer.tag, unchanged: answer.unchanged === true, pcmBase64: answer.pcmBase64 ?? "" };
+      },
+      // paseo-voice: whether the daemon takes the microphone as Opus; see opus-uplink.ts.
+      fetchVoiceCodec: async () => ({ opus: await daemonTakesOpus(client) }),`,
+  "the phone asks the plugin about Opus",
+);
+
+await splice(
+  app("src/dictation/dictation-stream-sender.ts"),
+  `import { i18n } from "@/i18n/i18next";`,
+  `import { i18n } from "@/i18n/i18next";
+import { Buffer } from "buffer";
+import { createOpusUplink, daemonTakesOpus, OPUS_FORMAT } from "@/audio/opus-uplink";`,
+  "dictation has the Opus uplink",
+);
+
+await splice(
+  app("src/dictation/dictation-stream-sender.ts"),
+  `  private readonly createDictationId: () => string;`,
+  `  private readonly createDictationId: () => string;
+  // paseo-voice: the microphone as Opus when the daemon takes it, decided per stream.
+  private readonly uplink = createOpusUplink("dictation");`,
+  "a dictation keeps its Opus uplink",
+);
+
+await splice(
+  app("src/dictation/dictation-stream-sender.ts"),
+  `    const start = (async () => {
+      await client.startDictationStream(dictationId, this.format);`,
+  `    const start = (async () => {
+      // paseo-voice: every stream starts the encoder afresh, as the daemon starts a decoder;
+      // a stream replayed after a reconnect is encoded again from its first segment.
+      this.uplink.reset(await daemonTakesOpus(client as Parameters<typeof daemonTakesOpus>[0]));
+      await client.startDictationStream(dictationId, this.format);`,
+  "a dictation stream asks about Opus",
+);
+
+await splice(
+  app("src/dictation/dictation-stream-sender.ts"),
+  `      const audio = this.segments[seq];
+      try {
+        client.sendDictationStreamChunk(dictationId, seq, audio, this.format);`,
+  `      // paseo-voice: Opus when the daemon takes it. A segment under one packet still goes,
+      // empty, so that every sequence number arrives.
+      const packed = this.uplink.pack(Buffer.from(this.segments[seq], "base64"));
+      const audio = Buffer.from(packed.audio).toString("base64");
+      const format = packed.format === OPUS_FORMAT ? OPUS_FORMAT : this.format;
+      try {
+        client.sendDictationStreamChunk(dictationId, seq, audio, format);`,
+  "dictation goes up as Opus when it may",
+);
+
 // 3. The test that pins the old tone's length, which would now fail the build.
 await splice(
   app("src/utils/thinking-tone.test.ts"),

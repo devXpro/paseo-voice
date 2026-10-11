@@ -348,6 +348,18 @@ export const fetchCue = defineRpc({
   }),
 });
 
+/**
+ * Whether the daemon running now can take a phone's microphone as Opus: the correction
+ * that decodes it is in Paseo's archive, the daemon started after it was written, and the
+ * decoder it loads is in place. The patched phone asks at the start of every voice
+ * session and sends PCM unless the answer is yes.
+ */
+export const voiceCodec = defineRpc({
+  name: "voice.codec",
+  input: z.object({}),
+  output: z.object({ opus: z.boolean() }),
+});
+
 /** Renders one cue so it can be auditioned before a build is spent on it. */
 export const previewCue = defineRpc({
   name: "voice.preview-cue",

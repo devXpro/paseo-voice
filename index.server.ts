@@ -30,8 +30,10 @@ import {
   setProvider,
   setRate,
   setSteady,
+  voiceCodec,
 } from "./shared/voice.shared.ts";
 import { installBinary } from "./server/binary.server.ts";
+import { ensureCodec } from "./server/codec.server.ts";
 import { createController } from "./server/controller.server.ts";
 import { createEngine } from "./server/engine.server.ts";
 import { render as renderCue, warmUp as warmUpCue } from "./server/cue.server.ts";
@@ -110,6 +112,9 @@ export default function contribute(server: PluginServerContext) {
   // A Paseo update replaces the files the corrections live in and ends in a restart,
   // which ends here.
   void controller.autoPatch().catch((failure: unknown) => log(`voice: auto-patch failed: ${String(failure)}`));
+
+  // The decoder the daemon's correction loads to hear a phone's microphone as Opus.
+  void ensureCodec().catch((failure: unknown) => log(`voice: Opus decoder: ${String(failure)}`));
 
   /** Every mutation answers with the whole status; the proxy's view is refreshed with it. */
   const fresh = <T>(status: T): T => {
@@ -236,6 +241,7 @@ export default function contribute(server: PluginServerContext) {
   });
 
   /** Auditions a waiting cue without spending a build to hear it. */
+  server.handle(voiceCodec, async () => ({ opus: await controller.opusReady() }));
   server.handle(previewCue, async (input) => {
     try {
       const at = await controller.choice();

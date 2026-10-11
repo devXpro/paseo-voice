@@ -401,71 +401,36 @@ export const SECTIONS: Section[] = [
     Component: (lab) => {
       const { data, theme, act } = lab;
       const { patch } = data;
+      // One patch and one button: the corrections are applied and reverted together, so
+      // the panel says what the whole of it does rather than file by file.
+      const partly = !patch.applied && patch.targets.some((target) => target.applied);
+      const state: { value: string; hint: string; tone: "ok" | "warn" } = !patch.available
+        ? { value: "не найден", hint: patch.error || "app.asar не найден: Paseo стоит не там, где ожидалось", tone: "warn" }
+        : patch.unknownVersion
+          ? { value: "другая версия", hint: "Paseo обновился и код изменился: патч не ляжет, пока его не перепроверят", tone: "warn" }
+          : patch.restartRequired
+            ? { value: "нужен перезапуск", hint: "Записано. Демон держит старый код в памяти — перезапусти Paseo, не reload", tone: "warn" }
+            : patch.applied
+              ? { value: "наложен", hint: "После обновлений Paseo накладывается сам, если файлы совпали с проверенными", tone: "ok" }
+              : { value: partly ? "частично" : "не наложен", hint: "Одна кнопка накладывает всё сразу, оригиналы сохраняются для отката", tone: "warn" };
+      const alerts = patch.targets.filter((target) => target.alert);
       return (
         <View>
-          <Group
-            theme={theme}
-            title="Правки в коде Paseo"
-            footer={
-              "Первая: Paseo оставляет тело ответа непрочитанным, пока не доиграет " +
-              "предыдущее предложение, а HTTP-клиент тем временем его выбрасывает — " +
-              "предложение пропадает молча. Вторая: он режет по каждой точке и не " +
-              "склеивает, отсюда паузы. Третья: мьют обрывает поток, а детектор конца " +
-              "фразы считает время только по входящему звуку — и сказанное остаётся " +
-              "неотправленным. У детектора есть flush, которым в демоне никто не пользуется."
-            }
-          >
-            {patch.targets.map((target, index) => (
-              <Row
-                key={target.id}
-                theme={theme}
-                label={target.title}
-                hint={
-                  target.alert ||
-                  (target.unknownVersion ? "Код в этой версии Paseo изменился — якоря не совпали" : target.note)
-                }
-                value={target.applied ? "включено" : "нет"}
-                valueColour={tone(theme, target.applied ? "ok" : "warn")}
-                last={index === patch.targets.length - 1}
-              />
-            ))}
-          </Group>
-
-          <Group
-            theme={theme}
-            footer={
-              patch.restartRequired
-                ? "Записано. Демон держит старый код в памяти — нужен полный перезапуск Paseo, не reload."
-                : "Длина файла сохраняется байт в байт, поэтому архив не перепаковывается и подпись не ломается сильнее, чем уже. Оригинал сохраняется рядом, откат мгновенный."
-            }
-          >
+          <Group theme={theme}>
             <Row
               theme={theme}
-              label="Архив"
-              hint={patch.archivePath || "app.asar не найден"}
-              value={patch.available ? "найден" : "нет"}
-              valueColour={tone(theme, patch.available ? "ok" : "warn")}
-            />
-            <Row
-              theme={theme}
-              label="После обновлений Paseo"
-              hint={
-                patch.auto
-                  ? "Накладывает сам, если файлы совпали с проверенными. Иначе не трогает и пишет здесь почему"
-                  : "Включится после «Наложить»; откат выключает"
-              }
-              value={patch.auto ? "сам" : "выключено"}
-              valueColour={tone(theme, patch.auto ? "ok" : "warn")}
+              label="Состояние"
+              hint={state.hint}
+              value={state.value}
+              valueColour={tone(theme, state.tone)}
             />
             <Row
               theme={theme}
               label={patch.applied ? "Откатить" : "Наложить"}
               hint={
-                patch.unknownVersion
-                  ? "Paseo обновился и код изменился — патч не подойдёт, нужны новые якоря"
-                  : patch.applied
-                    ? "Вернёт сохранённый оригинал"
-                    : "Запишет обе правки и сохранит оригинал"
+                patch.applied
+                  ? "Вернёт оригиналы и перестанет накладывать после обновлений"
+                  : "Запишет все правки и будет возвращать их после обновлений Paseo"
               }
               action={act.patching ? "Пишу…" : patch.applied ? "Откатить" : "Наложить"}
               disabled={act.patching || !patch.available || patch.unknownVersion}
@@ -474,11 +439,27 @@ export const SECTIONS: Section[] = [
             />
           </Group>
 
-          {patch.error ? (
-            <Group theme={theme}>
-              <Row theme={theme} label="Ошибка" hint={patch.error} last />
+          {alerts.length > 0 ? (
+            <Group theme={theme} title="Не легло после обновления Paseo">
+              {alerts.map((target, index) => (
+                <Row key={target.id} theme={theme} label={target.title} hint={target.alert} last={index === alerts.length - 1} />
+              ))}
             </Group>
           ) : null}
+
+          <Group
+            theme={theme}
+            title="Что он меняет"
+            footer={
+              "Сжатый голос с телефона работает с приложением, собранным из ios-build; с обычным " +
+              "Paseo из App Store телефон шлёт звук как раньше. Длина файлов сохраняется байт в байт, " +
+              "оригиналы лежат рядом, откат мгновенный."
+            }
+          >
+            {patch.targets.map((target, index) => (
+              <Row key={target.id} theme={theme} label={target.title} hint={target.note} last={index === patch.targets.length - 1} />
+            ))}
+          </Group>
         </View>
       );
     },

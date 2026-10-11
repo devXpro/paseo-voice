@@ -41,21 +41,57 @@ export function resample(pcm: Buffer, from: number, to: number): Buffer {
 }
 
 /**
- * Says `pcm` into the phone's microphone at the speed it would be spoken, then keeps the
- * microphone open on silence — which is how the daemon's voice detector hears a turn end.
+ * What a microphone hears in a quiet room: a noise floor around −60 dBFS, never digital
+ * zero. A real microphone does not produce exact zeros, and feeding them is not neutral —
+ * the logarithm of zero energy is minus infinity, which a speech model can turn into
+ * nonsense rather than into "nothing was said".
  */
-export async function say(native: NativeAudio, pcm: Buffer, options: { frameMs?: number; silenceMs?: number } = {}) {
+export function roomTone(bytes: number): Buffer {
+  const pcm = Buffer.alloc(bytes - (bytes % 2));
+  for (let at = 0; at < pcm.length; at += 2) {
+    pcm.writeInt16LE(Math.round((Math.random() * 2 - 1) * 32), at);
+  }
+  return pcm;
+}
+
+/** Loud enough to be a word rather than the breath around it: about −30 dBFS. */
+const SPEECH_PEAK = 1000;
+
+function peakOf(frame: Buffer): number {
+  let peak = 0;
+  for (let at = 0; at + 1 < frame.length; at += 2) {
+    peak = Math.max(peak, Math.abs(frame.readInt16LE(at)));
+  }
+  return peak;
+}
+
+/**
+ * Says `pcm` into the phone's microphone at the speed it would be spoken, then keeps the
+ * microphone open on the room's quiet — which is how the daemon's voice detector hears a
+ * turn end. `onSpoken` is called right after the last frame with a word in it: synthesised
+ * speech trails off into silence of its own, and the end of the file is not the end of
+ * the words.
+ */
+export async function say(
+  native: NativeAudio,
+  pcm: Buffer,
+  options: { frameMs?: number; silenceMs?: number; onSpoken?: () => void } = {},
+) {
   const frameMs = options.frameMs ?? 100;
   const frameBytes = 32 * frameMs; // 16 kHz, two bytes a sample
-  const silence = Buffer.alloc(frameBytes);
+  const silence = roomTone(frameBytes);
   const started = performance.now();
   let sent = 0;
-  const frames = [
-    ...Array.from({ length: Math.ceil(pcm.length / frameBytes) }, (_, at) => pcm.subarray(at * frameBytes, (at + 1) * frameBytes)),
-    ...Array.from({ length: Math.ceil((options.silenceMs ?? 1500) / frameMs) }, () => silence),
-  ];
-  for (const frame of frames) {
+  const words = Array.from({ length: Math.ceil(pcm.length / frameBytes) }, (_, at) =>
+    pcm.subarray(at * frameBytes, (at + 1) * frameBytes),
+  );
+  const lastWord = words.findLastIndex((frame) => peakOf(frame) >= SPEECH_PEAK);
+  const frames = [...words, ...Array.from({ length: Math.ceil((options.silenceMs ?? 1500) / frameMs) }, () => silence)];
+  for (const [at, frame] of frames.entries()) {
     native.hear(frame);
+    if (at === lastWord) {
+      options.onSpoken?.();
+    }
     sent += frameMs;
     // Paced against the clock rather than frame by frame, so timer drift does not add up.
     const ahead = sent - (performance.now() - started);

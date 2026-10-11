@@ -13,7 +13,7 @@ speaker.
 
 ```sh
 npm run e2e         # a simulated daemon and relay: about three minutes, free
-npm run e2e:live    # the real daemon, through the real relay: about two minutes
+npm run e2e:live    # the real daemon, and one of the tests' own: about six minutes
 ```
 
 Neither is part of `npm test` — the files are `*.e2e.ts` and `*.live.ts`, which the
@@ -55,7 +55,9 @@ and does three things:
 | `harness/phone.ts` | The phone: the real runtime and engine, wired the way the app wires them. Every event it takes in and every confirmation it sends goes into the timeline. |
 | `harness/native-audio.ts` | The stand-in for the native module: a speaker that queues PCM and plays it at the real rate, a microphone the harness talks into. |
 | `harness/simulated-daemon.ts` | The daemon and the relay, after `tts-manager.js`: one group per sentence, the next sent only once the last is confirmed, `speak` running before the audio and completed after it, and one ordered connection with a latency and a throughput. |
-| `harness/live-daemon.ts` | The real daemon, through the relay, end-to-end encrypted, with a test agent. |
+| `harness/live-daemon.ts` | The real daemon, through the relay, end-to-end encrypted, with a test agent — or a test daemon, straight over its port. |
+| `harness/test-daemon.ts` | A daemon of the tests' own, from the installed app: see [A daemon of the tests' own](#a-daemon-of-the-tests-own). |
+| `harness/dictation.ts` | The phone's dictation: Paseo's own `DictationStreamSender` from the checkout, fed the microphone the way the app feeds it, and finished for the transcript. |
 | `harness/tts.ts` | What the person says: synthesised by this plugin's proxy, fed to the microphone at the speed of speech. |
 | `harness/speech.ts` | Telling sounds apart. |
 | `harness/timeline.ts` | Everything, in order. |
@@ -182,6 +184,85 @@ PASEO_VOICE_E2E_CWD=/path/to/a/folder/claude/is/logged/in/for
 Without a working login the agent answers in text that authentication failed, ends its
 turn within a second and never speaks — the timeline shows exactly that line.
 
+### A daemon of the tests' own
+
+`e2e/live/listening.live.ts` does not run on the daemon everybody's sessions run under.
+It kills the daemon's speech worker on purpose, and it checks corrections to the daemon
+itself, which a daemon only loads when it starts — and restarting the real one ends
+every turn in flight, this conversation's included.
+
+So `startTestDaemon()` in `harness/test-daemon.ts` starts a second one: Paseo's own
+daemon from the installed app, run in the foreground from a home of its own
+(`~/.paseo-voice/e2e-daemon`), listening on `127.0.0.1:6768`. Its config is the real
+one's with the port changed and the plugins taken out, which would start a second copy of
+this one on the proxy's port. The speech models are linked rather than copied. The
+agent's voice still comes from this plugin's proxy, on the real daemon.
+
+**Off the relay unless asked.** `startTestDaemon({ relay: true })` puts it on the same
+relay under its own server id — its home has its own keys — and the harness then reaches
+it the phone's way, end-to-end encrypted, which is what a test about the link needs.
+`startTestDaemon({ env })` adds to its environment; `PASEO_VOICE_TTS_FORMAT=pcm` gives
+it upstream's uncompressed voice to compare with.
+
+Being started from the app, it runs **whatever corrections are in the archive right
+now**: write a correction, and the next test daemon has it while the real daemon goes on
+with the code it started with.
+
+The harness connects to it straight over its port with the local credential the daemon
+leaves in its home, as the CLI does — no relay, no encryption. A test gets the parts it
+needs to break things:
+
+- `daemon.killWorker()` — kills the speech worker with SIGKILL, the way it dies by
+  itself, and waits until the daemon has noticed;
+- `daemon.log()` — the daemon's own log lines since it started.
+
+The other suites can run on one too: `PASEO_VOICE_E2E_DAEMON=isolated npm run e2e:live`
+runs `voice.live.ts` there as well, which is how a correction is checked before the real
+daemon is restarted to load it.
+
+### Compressed audio
+
+`e2e/live/compression.live.ts` sends audio both ways compressed and uncompressed through
+the relay to test daemons and compares: the agent's voice as MP3 against PCM, and the
+person's — in voice mode and in dictation — as Opus against PCM. It states what the
+compression controls: the format on the wire, its size per second of speech, that every
+sentence still plays to the end and is confirmed, that nothing sounds after the answer,
+and that what was said is recognised word for word either way. How long the first
+sentence took on the link is printed, not asserted: part of it is the relay's own round
+trips, and a model never gives the same answer twice to compare it on.
+
+`PASEO_VOICE_E2E_CODEC` sets how the phone sends its microphone for a whole run —
+`opus`, `pcm`, or `plugin` to ask this plugin as the phone does — so the older suites
+can be run with it compressed:
+
+```sh
+PASEO_VOICE_E2E_DAEMON=isolated PASEO_VOICE_E2E_CODEC=opus npm run e2e:live
+```
+
+The phone's encoder is Swift, which the harness cannot run, so it has a test of its own:
+`e2e/opus-encoder.e2e.ts` compiles `ios-build/opus/VoiceOpusEncoder.swift` for this Mac
+as it is — AudioToolbox encodes Opus the same way on both — feeds it speech from `say`
+in the 128 ms chunks the phone's microphone gives, and decodes the result with the
+daemon's own `decodeOpusChunk`. In the live runs the harness's stand-in for the native
+module encodes with libopus (`opusscript`) in the same framing.
+
+### Talking to it by hand
+
+`e2e/tools/dialogue.ts` holds one live voice session open and takes orders over a local
+port, one utterance at a time — for what a scripted test would not think to try:
+
+```sh
+node --env-file-if-exists=.env.e2e --import ./e2e/harness/register.ts e2e/tools/dialogue.ts &
+curl -s -X POST --data-binary 'Скажи одно слово: яблоко.' 127.0.0.1:8139/say
+curl -s '127.0.0.1:8139/turn?waitMs=30000'     # how the turn ended, and the timeline of it
+curl -s -X POST --data-binary 'all' 127.0.0.1:8139/allow
+curl -s -X POST 127.0.0.1:8139/close
+```
+
+`POST /type` types into the chat instead, with voice mode still on. `GET /log?since=MS`
+gives the timeline from a moment on. `DIALOGUE_DAEMON=isolated` talks to a test daemon.
+The bugs `listening.live.ts` holds were found this way.
+
 ### Writing a live test
 
 One real conversation per block, several statements about it — a conversation costs a
@@ -201,7 +282,11 @@ describe("a question with a long answer", { timeout: 300_000 }, () => {
 
 `exchange` in `e2e/live/voice.live.ts` opens a session, says the question, waits for
 the turn to end, listens on, and closes. To go further, `openLiveSession` gives the
-parts: `say(text)`, `turnEnd(timeoutMs)`, `close()`, the phone and the timeline.
+parts: `say(text)`, `type(text)`, `turnEnd(timeoutMs)`, `close()`, the phone and the
+timeline. `say(text, { onSpoken })` calls back the moment the last word is out, before
+the quiet after it — where `listening.live.ts` kills the speech worker to lose a phrase.
+For a test that waits on the timeline rather than on one turn, `listening.live.ts` has
+`moment()`: the first moment after a time that matches.
 
 - **Ask what needs no tool.** An agent reaching for a tool waits for a permission
   nobody is there to grant; the timeline shows `agent.permission`.
@@ -234,6 +319,24 @@ This is how correction 7 in `ios-build/patch-app.mjs` was made, and the order ma
 5. **Then build**, with `ios-build/build.sh`, which fetches, resets and patches the
    same way before it builds.
 
+### A correction to the daemon
+
+The same order, with the test daemon in place of a rebuild:
+
+1. **Red on a test daemon**, in a live test that runs on one.
+2. **The correction, as splices in `server/patches.server.ts`**, with the sha256 of the
+   upstream file it was written against in `verified`. A file already corrected gets
+   its new splices added to its target: the archive keeps one original per file.
+3. **`npm test`**, which applies every archive correction to the installed Paseo's
+   files in memory: the anchors have to fit, the result has to fit the original's size,
+   and `node --check` has to accept it — a daemon that cannot parse a module does not
+   start.
+4. **Write it into the archive** — **Наложить**, or `apply()` from a script. The real
+   daemon is unaffected; it already has its code in memory.
+5. **Green on a fresh test daemon**, which every live test file starts for itself, then
+   `PASEO_VOICE_E2E_DAEMON=isolated npm run e2e:live` for everything else.
+6. **Restart the real daemon last** — it ends every turn in flight.
+
 For a question about timing alone, a variant is quicker than a correction:
 `runtimeVariant: "?minSilenceMs=1500"` runs the same scenario with upstream's wait.
 
@@ -256,3 +359,6 @@ ours — or moved the code the harness imports.
   `127.0.0.1:8123`, so the plugin has to be running with a voice chosen.
 - **`Failed to authenticate` from the agent** — the directory in `.env.e2e` has no
   working Claude login.
+- **«the test daemon did not start»** — its own output is in
+  `~/.paseo-voice/e2e-daemon/run.out` and its log beside it. Another process on port
+  6768 is the usual cause; `PASEO_VOICE_E2E_DAEMON_PORT` moves it.

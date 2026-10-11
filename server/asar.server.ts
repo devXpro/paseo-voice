@@ -1,4 +1,23 @@
+import { type Stats, statSync } from "node:fs";
 import { open } from "node:fs/promises";
+
+/**
+ * A file's stats as it is on disk. Paseo runs this plugin in one of its own Electron
+ * processes, and there `fs` shows an `.asar` as a directory — empty, and written just
+ * now — so its age and its size are made up. With `noAsar` it is the file it is.
+ * Synchronous, so that nothing else in the process runs while asar support is off: the
+ * plugin's host loads its own code out of that archive.
+ */
+export function statOnDisk(file: string): Stats {
+  const electron = process as { noAsar?: boolean };
+  const before = electron.noAsar;
+  electron.noAsar = true;
+  try {
+    return statSync(file);
+  } finally {
+    electron.noAsar = before;
+  }
+}
 
 /**
  * Just enough of the asar format to find one file inside Paseo's archive and overwrite

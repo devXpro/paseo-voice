@@ -60,7 +60,7 @@ documentation that cannot go stale without going red.
 
 ## What the tests cover
 
-99 of them, all `node:test`, no framework and no mocking library.
+117 of them, all `node:test`, no framework and no mocking library.
 
 The ones worth knowing about:
 
@@ -79,7 +79,9 @@ There is no test that needs a Google key or a network.
 **End to end**, the phone's own voice code runs against a simulated daemon
 (`npm run e2e`) and against the real one through the relay (`npm run e2e:live`). Those
 need the patched iOS checkout and are kept out of `npm test`; see
-[e2e/README.md](../e2e/README.md).
+[e2e/README.md](../e2e/README.md). `npm run e2e` also compiles the phone's Opus encoder
+for this Mac, which needs Xcode's command-line tools; the live runs encode with
+`opusscript`, a development dependency.
 
 ## Things known and not done
 
@@ -87,6 +89,13 @@ need the patched iOS checkout and are kept out of `npm test`; see
   `google.server.ts` and the list is always sent empty. See
   [voices.md](voices.md#stress).
 - **Issues worth filing upstream**, each reproduced: the silently dropped TTS segments
-  (a forty-line repro exists), mute never ending a turn, and
+  (a forty-line repro exists), mute never ending a turn,
   `daemon.mcp.injectIntoAgents` being off by default when voice mode cannot work
-  without it.
+  without it, and the three `e2e/live/listening.live.ts` keeps red on a stock daemon —
+  the recogniser fed the whole room, the voice detector never reconnected after the
+  speech worker dies, and the agent's voice left aborted after an empty turn. And a
+  wish rather than a bug: audio crosses the relay uncompressed both ways.
+- **`build.sh` installs on a phone only when `devicectl` calls it "connected".** A
+  phone it lists as "available (paired)" — plugged in or on the network — is not
+  picked up, and step 7 ends as if there were none; install by hand, as
+  [troubleshooting.md](troubleshooting.md) shows.

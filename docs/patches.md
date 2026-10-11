@@ -1,11 +1,14 @@
 # What is changed inside Paseo
 
-Three corrections, written into Paseo's own code. **Патч Paseo** applies and reverts
-each on its own, and shows which are in place.
+One patch, written into Paseo's own code: **Патч Paseo** applies all of it with one
+button and reverts all of it with the same one, and lists what it changes in plain words.
+Underneath it is a correction per file, each checked and kept on its own — that is what
+the sections below describe.
 
-They exist because there is no seam for them. Two are bugs with no setting behind them,
-and the third is a sound with no setting behind it. Everything this plugin could do
-through the published plugin API, it does through the published plugin API.
+They exist because there is no seam for them: bugs with no setting behind them, the
+audio Paseo sends both ways uncompressed, and a sound with no setting behind it.
+Everything this plugin could do through the published plugin API, it does through the
+published plugin API.
 
 ## How it is done safely
 
@@ -19,6 +22,15 @@ leading indentation is halved, then dropped, then the remainder is padded with s
 **It refuses rather than guesses.** Every correction is anchored to an exact string or
 a shape. An anchor that is missing, or that occurs twice, is a refusal — reported as
 «незнакомая версия Paseo». An upstream rewrite therefore cannot be half-applied.
+
+**A correction already in place is checked, not assumed.** Every patched file carries
+the marker `paseo-voice:`, but the marker only says that some version of a correction is
+in there. So a patched file counts as current only if it is exactly what the correction
+makes now of the original kept beside it (below). When a plugin update changes a
+correction, the two differ, and it is made again from that original — through every
+check a clean file goes through, the `verified` hash included. A patched file with no
+original beside it is refused: there is nothing to make it again from, and nothing to
+tell whether it is current.
 
 **The original is kept first.** Before every write, the untouched source goes to
 `~/.paseo-voice/patches/<name>.original`, replacing whatever was there. Writing only
@@ -60,20 +72,147 @@ correction also merges sentences up to the 260-character limit the manager alrea
 defines, which turns a seven-part answer into one or two — each part was its own
 request, its own round trip, and its own second of silence.
 
-## Мьют отправляет фразу
+## Голосовой ввод
 
 `@getpaseo/server/.../session/voice/voice-turn-controller.js`
 
-Pressing mute should end the turn and send what was said. Instead the audio stream
-stops, the silence detector never sees the silence it is waiting for, and what was
-dictated sits there unsent until something else wakes it.
+Three bugs in the part of the daemon that listens. One file, so one correction: the
+archive keeps one original per file.
+
+**Mute sends the phrase.** Pressing mute should end the turn and send what was said.
+Instead the audio stream stops, the silence detector never sees the silence it is
+waiting for, and what was dictated sits there unsent until something else wakes it.
 
 The detector already has a `flush()` that forces a turn to end. Nothing in the daemon
 ever calls it. This adds a watchdog: every 150 ms, if the stream has been quiet for
 600 ms while capturing, call `flush()`. Six hundred milliseconds is longer than any
-network jitter and shorter than a pause anybody would notice.
+network jitter and shorter than a pause anybody would notice. The timer is `unref`'d,
+so it cannot hold the process open.
 
-The timer is `unref`'d, so it cannot hold the process open.
+**The recogniser hears phrases, not the room.** The phone's microphone stays open for as
+long as voice mode is on and mute is off, and the daemon handed every chunk of it to the
+recogniser. The local Parakeet session keeps all of it until a phrase is committed, and
+decodes the whole of it again every 350 ms — so everything between two phrases piled
+up there: the agent thinking, the agent talking, the person listening. Measured live:
+
+| Since the previous phrase | What became of the next one |
+|---|---|
+| 25 s | heard |
+| 53 s | the start lost: «Тогда запусти пинг… девяносто раз» arrived as «90 раз» |
+| 85 s | the speech worker died (SIGTRAP inside onnxruntime); ten seconds later, an empty transcript |
+
+Now the recogniser is given a phrase only, from the moment the detector confirms it,
+together with the three seconds before. The detector confirms speech after 800 ms of it
+unbroken, and a short first word with a pause after it — «Так, …», «Слушай, …», «Стоп,
+хватит» — breaks that count: the phrase is confirmed only on the next word, over two
+seconds in. Kept for two seconds, «Стоп» was lost; three cover it. Between phrases
+nothing is decoded at all.
+
+What it still cannot do is a single phrase longer than about fifty seconds with no
+second-long pause in it — that is the recogniser's own limit, and the detector ends a
+phrase at every pause of a second.
+
+**A detector that dies is replaced.** The voice-activity detector lives in the same
+speech worker as the recogniser. When the worker died, the recogniser was reconnected
+and the detector never was: its session went with the old worker, every chunk after that
+went nowhere, and voice mode heard nothing more until it was switched off and on. Now a
+new detector takes its place, and a phrase the old one was in the middle of is closed,
+since its end would never be heard.
+
+## Голосовая сессия
+
+`@getpaseo/server/.../session/voice/voice-session.js`
+
+Two things in one file, so one correction.
+
+**The agent does not go mute.** Speech that cuts into the agent aborts whatever is
+playing. The abort was lifted only when a transcript with words in it arrived. A turn
+that ended empty — a cough, a noise the detector took for speech, a phrase lost to a
+crash — left it standing, and every reply the agent spoke after that was dropped in
+0 ms: no audio sent, no error, the agent sure it had said it. Until a phrase was
+recognised again, which after a crash, with the detector gone, never happened.
+
+The abort is now lifted whenever the person's turn is over, whatever came of it. The log
+line the correction follows — `Speech turn complete (…) – resuming TTS` — has always
+said exactly that.
+
+This one and the last two in [Голосовой ввод](#голосовой-ввод) were reproduced with the
+live harness before they were corrected, and `e2e/live/listening.live.ts` keeps them
+reproduced: it fails on a Paseo without the corrections. See [e2e.md](e2e.md).
+
+**Speech from the phone is taken as Opus** — see [below](#голос-с-телефона-в-opus).
+
+## Диктовка в Opus
+
+`@getpaseo/server/.../dictation/dictation-stream-manager.js`
+
+The same for dictation: a chunk that arrives as Opus becomes the PCM the stream was
+started with, before anything else sees it — and a chunk that arrives twice is decoded
+once, since Opus carries state from packet to packet. See
+[below](#голос-с-телефона-в-opus).
+
+## Голос агента в MP3
+
+`@getpaseo/server/.../speech/providers/openai/config.js`
+
+The agent's voice used to reach the phone as raw 24 kHz PCM, 48 KB for every second of
+speech, one message per sentence — and the phone starts a sentence only once it holds
+all of it. Measured on a phone: 0.8 s on the way for five and a half seconds of speech,
+2 s for thirteen, on top of the synthesis. That is most of the wait between the text
+appearing and the voice starting, and the whole of the pause between two sentences.
+
+Paseo's speech client already knows MP3, and both clients already play it — the phone
+through its file player, the desktop through Web Audio — but the daemon's config asks for
+`pcm` and nothing else. The correction asks for `mp3`, and this plugin's proxy answers:
+Google encodes MP3 itself, at 64 kbit/s — a sixth of the PCM, with no setting for
+less — and the local engine's PCM is encoded by `lame`, or `ffmpeg`, whichever is there.
+With neither, the local engine cannot speak while the patch is in place: `brew install
+lame`.
+Google returns MP3 no slower than PCM: 358 ms against 439 for 117 characters, 694
+against 722 for 235.
+
+The loss is audible only up close: on the phone's speaker nothing, in good headphones a
+slight smear on sibilants. `PASEO_VOICE_TTS_FORMAT=pcm` in the daemon's environment
+brings PCM back, which is how the tests compare the two.
+
+## Голос с телефона в Opus
+
+The other direction. While voice mode is on and unmuted, and for the whole of a
+dictation, the phone streams its microphone to the daemon: 16 kHz PCM, 32 KB a second,
+about 340 kbit/s once it is base64. A weak mobile uplink does not carry that, and then
+what is said arrives late or not at all.
+
+The patched phone sends Opus at 24 kbit/s instead: a tenth, measured end to end at
+3 KB a second against 36–42. iOS encodes it itself, so nothing is linked into the app;
+see [ios.md](ios.md#the-corrections-it-applies).
+
+**Only to a daemon that can decode it.** Before every voice session and every dictation
+the phone asks this plugin (`voice.codec`), and the answer is yes only when both
+corrections that decode Opus are in the archive, the daemon running now was started
+after they were written, and the decoder is in place. An App Store build never asks and
+sends PCM; a patched build talking to an unpatched daemon is told no and sends PCM.
+
+**One decoder, in one place.** The daemon cannot import from this plugin — the plugin
+is bundled and runs in a process of its own — so the decoding lives in a module this
+plugin writes to `~/.paseo-voice/codec/opus.mjs`, and both corrections only load it and
+call `decodeOpusChunk`, one decoder per stream: a voice session, a dictation. The tests
+decode with the same call.
+
+**The decoder is fetched, not shipped.** It is `opus-decoder` 0.7.12 (MIT, Ethan
+Halsall), libopus compiled to WebAssembly inside it (BSD-3-Clause, Xiph.Org): fetched
+once from the npm registry on the plugin's first start, like the engine and the music,
+and checked twice — the tarball against the registry's own sha512, and the file inside
+against the sha256 of the one the tests ran. Without a network on that start the phone
+is told no, and the next start fetches it.
+
+**The wire format** is this plugin's own: each chunk is 20 ms Opus packets, each
+prefixed with its length as a little-endian u16, under
+`audio/opus;rate=16000;framing=u16le`. A chunk under one packet goes empty in dictation,
+so that every sequence number arrives, and is not sent at all in voice mode.
+
+**Switched off by hand** with an empty file, `~/.paseo-voice/opus-off`: the plugin
+answers no, and every phone sends PCM from its next voice session or dictation — no
+restart, no rebuild. The way out when a phone's build gets the encoding wrong.
 
 ## Своя музыка ожидания
 
@@ -110,7 +249,7 @@ Paseo updates itself, and an update replaces the files these corrections live in
 on every start of the plugin — and every update ends in one — whatever is missing is
 put back, each correction on its own:
 
-- **The two archive files** are written only if their sha256 is on the correction's
+- **The archive files** are written only if their sha256 is on the correction's
   `verified` list in `server/patches.server.ts` — the upstream versions it was reviewed
   against. Anchors alone are not enough for this. They only see the lines being
   replaced, while the replacements lean on names around them: rename

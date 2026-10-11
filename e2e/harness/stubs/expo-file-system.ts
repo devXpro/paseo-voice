@@ -1,12 +1,34 @@
 /**
  * Imported by Paseo's audio engine alongside `expo-audio`, for the temporary files encoded
- * audio is played from. Voice is PCM and never needs one; see `expo-audio.ts`.
+ * audio is played from — which is how MP3 speech reaches the phone's speaker. Kept in
+ * memory: the player stand-in in `expo-audio.ts` reads them back by URI.
  */
 
+const files = new Map<string, Uint8Array>();
+
+export const Paths = { cache: "harness-cache" };
+
 export class File {
-  constructor() {
-    throw new Error("expo-file-system.File is not available in the harness: only PCM playback is simulated");
+  readonly uri: string;
+
+  constructor(directory: unknown, name: string) {
+    this.uri = `file:///${String(directory)}/${name}`;
+  }
+
+  write(bytes: Uint8Array): void {
+    files.set(this.uri, Uint8Array.from(bytes));
+  }
+
+  get exists(): boolean {
+    return files.has(this.uri);
+  }
+
+  delete(): void {
+    files.delete(this.uri);
   }
 }
 
-export const Paths = { cache: "" };
+/** For the player stand-in: what was written at `uri`. */
+export function readFile(uri: string): Uint8Array | undefined {
+  return files.get(uri);
+}

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { after, before, describe, test } from "node:test";
 import { setTimeout as sleep } from "node:timers/promises";
 import { openLiveSession } from "../harness/live-daemon.ts";
+import { startTestDaemon, type TestDaemon } from "../harness/test-daemon.ts";
 import { createTimeline, type Heard, type Timeline } from "../harness/timeline.ts";
 
 /**
@@ -13,6 +14,20 @@ import { createTimeline, type Heard, type Timeline } from "../harness/timeline.t
  * one per assertion. Questions are ones a model answers without reaching for a tool:
  * a tool would wait on a permission nobody is there to grant.
  */
+
+/**
+ * `PASEO_VOICE_E2E_DAEMON=isolated` runs these on a daemon of their own instead — which is
+ * how a correction to the daemon is tried before the real one is restarted to load it.
+ */
+let daemon: TestDaemon | undefined;
+before(async () => {
+  if (process.env.PASEO_VOICE_E2E_DAEMON === "isolated") {
+    daemon = await startTestDaemon();
+  }
+});
+after(async () => {
+  await daemon?.stop();
+});
 
 type Exchange = {
   timeline: Timeline;
@@ -29,7 +44,7 @@ type Exchange = {
 
 async function exchange(question: string): Promise<Exchange> {
   const timeline = createTimeline();
-  const session = await openLiveSession({ timeline });
+  const session = await openLiveSession({ timeline, daemon });
   try {
     await session.say(question);
     const ended = await session.turnEnd(120_000);

@@ -123,9 +123,14 @@ export type SpeakRequest = {
   rate?: number;
   /** Only the entries whose phrase occurs in the text are worth sending. */
   pronunciations?: Pronunciation[];
+  /** MP3 comes back ready to send; LINEAR16 is the default. */
+  encoding?: "LINEAR16" | "MP3";
 };
 
-/** Returns raw 24 kHz mono 16-bit PCM, the header stripped — what the Paseo client wants. */
+/**
+ * Returns raw 24 kHz mono 16-bit PCM, the header stripped — what the Paseo client wants —
+ * or, asked for MP3, Google's own MP3 at the same rate.
+ */
 export async function speak(request: SpeakRequest): Promise<Buffer> {
   const input: Record<string, unknown> = { text: request.text };
   const used = (request.pronunciations ?? []).filter((entry) =>
@@ -148,7 +153,7 @@ export async function speak(request: SpeakRequest): Promise<Buffer> {
       input,
       voice: { languageCode: request.language ?? "ru-RU", name: request.voice },
       audioConfig: {
-        audioEncoding: "LINEAR16",
+        audioEncoding: request.encoding ?? "LINEAR16",
         sampleRateHertz: 24_000,
         ...(request.rate && request.rate !== 1 ? { speakingRate: request.rate } : {}),
       },
@@ -158,8 +163,8 @@ export async function speak(request: SpeakRequest): Promise<Buffer> {
   if (!response.ok) {
     throw new Error(`Google: ${response.status} ${(await response.text()).slice(0, 300)}`);
   }
-  const wav = Buffer.from(((await response.json()) as { audioContent: string }).audioContent, "base64");
-  return stripWavHeader(wav);
+  const audio = Buffer.from(((await response.json()) as { audioContent: string }).audioContent, "base64");
+  return request.encoding === "MP3" ? audio : stripWavHeader(audio);
 }
 
 /**

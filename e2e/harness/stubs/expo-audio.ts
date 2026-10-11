@@ -1,17 +1,60 @@
+import { mp3Duration } from "../../../server/mp3.server.ts";
+import { currentNativeAudio } from "../native-audio.ts";
+import { readFile } from "./expo-file-system.ts";
+
 /**
- * Paseo's audio engine imports `expo-audio` for encoded files — mp3, m4a — played through
- * the system player. Voice is PCM and never goes that way, so in the harness these only
- * have to exist; being called means a scenario went somewhere it was not built for.
+ * Paseo's audio engine plays encoded files — MP3 speech among them — through `expo-audio`,
+ * the system player, rather than through the native module PCM goes to. This plays them
+ * on the harness's speaker for as long as the file lasts, and reports back the way
+ * `expo-audio` does: loaded with a duration, then finished.
  */
 
-function unavailable(name: string): never {
-  throw new Error(`expo-audio.${name} is not available in the harness: only PCM playback is simulated`);
-}
+type Status = { playbackState: string; isLoaded: boolean; didJustFinish: boolean; duration: number };
+type Listener = (status: Status) => void;
 
-export function createAudioPlayer(): never {
-  return unavailable("createAudioPlayer");
-}
+export async function setAudioModeAsync(): Promise<void> {}
 
-export async function setAudioModeAsync(): Promise<never> {
-  return unavailable("setAudioModeAsync");
+export function createAudioPlayer(uri: string) {
+  const listeners = new Set<Listener>();
+  const emit = (status: Status) => {
+    for (const listener of listeners) {
+      listener(status);
+    }
+  };
+  let sounding: { stop(): void } | null = null;
+  let finish: ReturnType<typeof setTimeout> | undefined;
+
+  return {
+    addListener(_event: "playbackStatusUpdate", listener: Listener) {
+      listeners.add(listener);
+      return {
+        remove() {
+          listeners.delete(listener);
+        },
+      };
+    },
+
+    play(): void {
+      const bytes = readFile(uri);
+      const seconds = bytes ? mp3Duration(bytes) : 0;
+      if (!bytes || seconds === 0) {
+        // What the real player says about a file it cannot decode.
+        queueMicrotask(() => emit({ playbackState: "failed", isLoaded: false, didJustFinish: false, duration: 0 }));
+        return;
+      }
+      sounding = currentNativeAudio().playFile("speech", seconds * 1000);
+      queueMicrotask(() => emit({ playbackState: "playing", isLoaded: true, didJustFinish: false, duration: seconds }));
+      finish = setTimeout(() => {
+        sounding = null;
+        emit({ playbackState: "finished", isLoaded: true, didJustFinish: true, duration: seconds });
+      }, seconds * 1000);
+    },
+
+    remove(): void {
+      clearTimeout(finish);
+      sounding?.stop();
+      sounding = null;
+      listeners.clear();
+    },
+  };
 }

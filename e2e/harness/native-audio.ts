@@ -1,3 +1,4 @@
+import OpusScript from "opusscript";
 import type { Timeline } from "./timeline.ts";
 
 /**
@@ -11,7 +12,65 @@ import type { Timeline } from "./timeline.ts";
  * The microphone works the way the real module's does: whoever subscribed to
  * `onMicrophoneData` and `onInputVolumeLevelData` gets frames and levels — here, when
  * the harness says something through `hear`.
+ *
+ * And the Opus encoder the patched module carries works the way `VoiceOpusEncoder.swift`
+ * does — 20 ms packets at 24 kbit/s, each prefixed with its length — through libopus
+ * rather than AudioToolbox. The Swift encoder is proved on its own in
+ * `e2e/opus-encoder.e2e.ts`; this is for everything around it.
  */
+
+const OPUS_FRAME = 320; // 20 ms at 16 kHz
+
+/**
+ * Expo's bridge takes a typed array by its constructor's name, looked up in a table of
+ * the standard ones (`TypedArray.cpp`, `nameToKindMap.at`). Anything else — a `Buffer`,
+ * which is a `Uint8Array` subclass — fails on the phone with this very message, and so it
+ * fails here: the stand-in that took any `Uint8Array` is how one reached a phone.
+ */
+const TYPED_ARRAYS = new Set([
+  "Int8Array",
+  "Uint8Array",
+  "Uint8ClampedArray",
+  "Int16Array",
+  "Uint16Array",
+  "Int32Array",
+  "Uint32Array",
+  "Float32Array",
+  "Float64Array",
+  "BigInt64Array",
+  "BigUint64Array",
+]);
+
+function acrossTheBridge(bytes: Uint8Array): Uint8Array {
+  if (!TYPED_ARRAYS.has(bytes.constructor.name)) {
+    throw new Error(`Exception in HostFunction: unordered_map::at: key not found (given a ${bytes.constructor.name})`);
+  }
+  return bytes;
+}
+
+/** `VoiceOpusEncoder.encode`, in libopus: whole packets for everything handed in so far. */
+function createOpusEncoder() {
+  const encoder = new OpusScript(16_000, 1, OpusScript.Application.VOIP);
+  encoder.setBitrate(24_000);
+  let pending = Buffer.alloc(0);
+  return {
+    encode(pcm: Uint8Array): Uint8Array {
+      pending = Buffer.concat([pending, Buffer.from(pcm.buffer, pcm.byteOffset, pcm.byteLength)]);
+      const packets: Buffer[] = [];
+      while (pending.length >= OPUS_FRAME * 2) {
+        const packet = encoder.encode(pending.subarray(0, OPUS_FRAME * 2), OPUS_FRAME);
+        const size = Buffer.alloc(2);
+        size.writeUInt16LE(packet.length);
+        packets.push(size, Buffer.from(packet));
+        pending = pending.subarray(OPUS_FRAME * 2);
+      }
+      return new Uint8Array(Buffer.concat(packets));
+    },
+    free(): void {
+      encoder.delete();
+    },
+  };
+}
 
 const BYTES_PER_MS = 32; // 16 000 samples a second, two bytes each
 
@@ -45,6 +104,8 @@ export function createNativeAudio(timeline: Timeline, labelOf: (pcm: Uint8Array)
   // When the speaker is next free: anything queued before then plays after it.
   let freeAt = 0;
   const listeners = new Map<string, Set<Listener>>();
+  // One encoder per stream, as the patched module keeps them: voice and dictation.
+  const opus = new Map<string, ReturnType<typeof createOpusEncoder>>();
 
   const native = {
     addExpoTwoWayAudioEventListener(name: string, listener: Listener) {
@@ -84,6 +145,7 @@ export function createNativeAudio(timeline: Timeline, labelOf: (pcm: Uint8Array)
     resumePlayback() {},
 
     playPCMData(pcm: Uint8Array) {
+      acrossTheBridge(pcm);
       const now = timeline.now();
       const from = Math.max(now, freeAt);
       const to = from + pcm.byteLength / BYTES_PER_MS;
@@ -103,6 +165,41 @@ export function createNativeAudio(timeline: Timeline, labelOf: (pcm: Uint8Array)
       }
       freeAt = now;
       timeline.note("speaker.stopped");
+    },
+
+    /**
+     * An encoded file through the system player — the phone's other way to sound, which
+     * MP3 speech takes. Heard from now for `ms`; `stop` cuts it where it is.
+     */
+    playFile(label: string, ms: number): { stop(): void } {
+      const heard = { label, from: timeline.now(), to: Math.round(timeline.now() + ms) };
+      timeline.heard.push(heard);
+      timeline.note("speaker.file", `${label}, ${Math.round(ms)} ms`);
+      return {
+        stop() {
+          const now = timeline.now();
+          if (heard.to > now) {
+            heard.to = Math.max(heard.from, now);
+            timeline.note("speaker.file-stopped");
+          }
+        },
+      };
+    },
+
+    /** The patched module's: the microphone's PCM as length-prefixed Opus packets. */
+    encodeOpus(stream: string, pcm: Uint8Array): Uint8Array | null {
+      acrossTheBridge(pcm);
+      let encoder = opus.get(stream);
+      if (!encoder) {
+        encoder = createOpusEncoder();
+        opus.set(stream, encoder);
+      }
+      return encoder.encode(pcm);
+    },
+
+    resetOpusEncoder(stream: string): void {
+      opus.get(stream)?.free();
+      opus.delete(stream);
     },
 
     tearDown() {},

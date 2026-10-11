@@ -9,15 +9,15 @@
 ### Your agent, out loud and in Russian — with lounge music while it thinks
 
 Google Cloud Text-to-Speech for [Paseo](https://paseo.sh)'s voice mode, a local neural
-engine behind it for when there is no key or no network, and corrections for three
+engine behind it for when there is no key or no network, and corrections for the
 things in Paseo that no setting reaches.
 
 [![Release](https://img.shields.io/github/v/release/devXpro/paseo-voice?style=flat-square&color=111111&labelColor=111111&label=release)](https://github.com/devXpro/paseo-voice/releases)
 [![Paseo](https://img.shields.io/badge/Paseo-%E2%89%A5%200.10-111111?style=flat-square&labelColor=111111)](https://paseo.sh)
 [![Licence](https://img.shields.io/github/license/devXpro/paseo-voice?style=flat-square&color=111111&labelColor=111111&label=licence)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-99%20passing-111111?style=flat-square&labelColor=111111)](docs/development.md)
+[![Tests](https://img.shields.io/badge/tests-117%20passing-111111?style=flat-square&labelColor=111111)](docs/development.md)
 
-🇷🇺 **Real Russian voices** · 🎶 **Music instead of the beep** · 📊 **Spend metered live** · 🩹 **Three bugs fixed in Paseo itself**
+🇷🇺 **Real Russian voices** · 🎶 **Music instead of the beep** · 📊 **Spend metered live** · 🩹 **Six bugs fixed in Paseo itself** · 📶 **Voice in a sixth of the traffic, both ways**
 
 </div>
 
@@ -63,7 +63,7 @@ restart the app afterwards. Getting a key, and what it costs, is in
 | 🎙️ **Голос** | Provider, billing family, voice — each with a play button. Tempo and delivery. [docs/voices.md](docs/voices.md) |
 | 📊 **Лимиты** | A bar per billing family: characters spent this month, hours of speech left, what any overspend cost. [docs/google.md](docs/google.md) |
 | 🎶 **Звук ожидания** | What loops while the agent thinks: four shipped tracks, your own files, or silence. [docs/music.md](docs/music.md) |
-| 🩹 **Патч Paseo** | Three corrections to Paseo's own code, each applied and reverted on its own, and put back after a Paseo update when the files are ones they were reviewed against. [docs/patches.md](docs/patches.md) |
+| 🩹 **Патч Paseo** | One patch, one button: fixes in Paseo's own code, and its audio compressed both ways — the agent's voice as MP3, the phone's microphone as Opus. Put back after a Paseo update when the files are ones it was reviewed against. [docs/patches.md](docs/patches.md) |
 | 🖥️ **Локальный движок** | The fallback: binary, model, state. [docs/local-engine.md](docs/local-engine.md) |
 | ⚙️ **Речь агента** | The two daemon settings voice mode cannot work without. [docs/patches.md](docs/patches.md#the-two-daemon-settings) |
 | ⌨️ **Диктовка** | Reports whether the Whisper model is where `paseo-whisper` looks for it. |

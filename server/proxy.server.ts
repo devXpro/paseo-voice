@@ -2,6 +2,7 @@ import { createServer, request as createRequest, type Server } from "node:http";
 import type { Engine } from "./engine.server.ts";
 import { type Pronunciation, speak as speakWithGoogle, tierOf } from "./google.server.ts";
 import { render as renderCue } from "./cue.server.ts";
+import { encodeMp3, mp3Duration } from "./mp3.server.ts";
 import { durationSeconds, lowPass, trimPadding } from "./pcm.server.ts";
 import { record } from "./usage.server.ts";
 import { STEADY_SEED } from "./state.server.ts";
@@ -125,16 +126,18 @@ export function createProxy(options: ProxyOptions): Proxy {
     return Buffer.concat(chunks);
   }
 
-  async function render(text: string, at: Choice): Promise<Buffer> {
+  /** PCM from either provider, or MP3 straight from Google, which encodes it itself. */
+  async function render(text: string, at: Choice, encoding: "LINEAR16" | "MP3" = "LINEAR16"): Promise<Buffer> {
     if (at.provider !== "google") {
       return fromEngine(text, at);
     }
-    const pcm = await speakWithGoogle({
+    const audio = await speakWithGoogle({
       key: at.googleKey,
       voice: at.voice,
       text,
       rate: at.rate,
       pronunciations: at.pronunciations,
+      encoding,
     });
     const tier = tierOf(at.voice);
     if (tier) {
@@ -145,7 +148,25 @@ export function createProxy(options: ProxyOptions): Proxy {
       // emoji is one character to them and two to `.length`.
       void record(tier, [...text].length).catch((failure: unknown) => log(`voice: usage: ${String(failure)}`));
     }
-    return pcm;
+    return audio;
+  }
+
+  /** What Paseo plays as `pcm`: headerless 24 kHz samples, the engine's padding gone. */
+  async function pcmOf(text: string, at: Choice): Promise<Buffer> {
+    const pcm = trimPadding(await render(text, at));
+    return at.phoneSafe ? lowPass(pcm) : pcm;
+  }
+
+  /**
+   * MP3, once this plugin's correction to the daemon asks for it. Google encodes it
+   * itself; the local engine's PCM is encoded here. No low-pass: that was for the phone's
+   * resampling of raw PCM, and the player that decodes MP3 resamples properly.
+   */
+  async function mp3Of(text: string, at: Choice): Promise<Buffer> {
+    if (at.provider === "google") {
+      return render(text, at, "MP3");
+    }
+    return encodeMp3(trimPadding(await render(text, at)));
   }
 
   /**
@@ -219,9 +240,13 @@ export function createProxy(options: ProxyOptions): Proxy {
     response: import("node:http").ServerResponse,
   ) {
     let input = "";
+    let format: "pcm" | "mp3" = "pcm";
     try {
-      const body = JSON.parse(await readBody(request)) as { input?: string; text?: string };
+      const body = JSON.parse(await readBody(request)) as { input?: string; text?: string; response_format?: string };
       input = (body.input ?? body.text ?? "").trim();
+      // Upstream asks for `pcm`; the daemon asks for `mp3` once this plugin's correction
+      // to its speech config is in. Anything else gets what upstream would have.
+      format = body.response_format === "mp3" ? "mp3" : "pcm";
     } catch {
       refuse(response, 400, "body is not JSON");
       return;
@@ -251,27 +276,24 @@ export function createProxy(options: ProxyOptions): Proxy {
      * sentence before playing it anyway.
      */
     const started = Date.now();
-    let pcm: Buffer;
+    let audio: Buffer;
     try {
-      pcm = trimPadding(await render(input, at));
-      if (at.phoneSafe) {
-        pcm = lowPass(pcm);
-      }
+      audio = format === "mp3" ? await mp3Of(input, at) : await pcmOf(input, at);
     } catch (failure) {
       const message = failure instanceof Error ? failure.message : String(failure);
       log(`voice: ${at.provider}: ${input.length} chars failed after ${Date.now() - started}ms: ${message}`);
       refuse(response, 502, message);
       return;
     }
-    if (pcm.length === 0) {
+    if (audio.length === 0) {
       log(`voice: ${at.provider} returned no audio for ${input.length} chars`);
       refuse(response, 502, "синтез вернул пустой звук");
       return;
     }
 
     response.writeHead(200, {
-      "content-type": "audio/pcm",
-      "content-length": String(pcm.length),
+      "content-type": format === "mp3" ? "audio/mpeg" : "audio/pcm",
+      "content-length": String(audio.length),
       "cache-control": "no-store",
       /**
        * No keep-alive, deliberately. Paseo reads a sentence's body only when the
@@ -283,11 +305,12 @@ export function createProxy(options: ProxyOptions): Proxy {
        */
       connection: "close",
     });
-    response.end(pcm);
+    response.end(audio);
     // One line per sentence. When an answer goes quiet halfway, this is what says
     // whether the audio was ever produced or only ever lost.
+    const seconds = format === "mp3" ? mp3Duration(audio) : durationSeconds(audio);
     log(
-      `voice: ${at.provider} spoke ${input.length} chars → ${durationSeconds(pcm).toFixed(2)}s in ${Date.now() - started}ms`,
+      `voice: ${at.provider} spoke ${input.length} chars → ${seconds.toFixed(2)}s ${format}, ${Math.round(audio.length / 1024)} KB in ${Date.now() - started}ms`,
     );
   }
 

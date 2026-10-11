@@ -1,9 +1,9 @@
 import { createHash } from "node:crypto";
-import { mkdir, open, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, open, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
 import vm from "node:vm";
-import { type Archive, type Entry, locate, readArchive, readEntry, writeEntry } from "./asar.server.ts";
+import { type Archive, type Entry, locate, readArchive, readEntry, statOnDisk, writeEntry } from "./asar.server.ts";
 import { paths } from "./paths.server.ts";
 
 /**
@@ -150,6 +150,289 @@ const muteSplices: readonly Splice[] = [
 ];
 
 /**
+ * The recogniser hears phrases, not the room. Upstream hands it every chunk the phone
+ * sends while voice mode is on, and the local Parakeet session keeps all of it until a
+ * phrase is committed — decoding the whole of it again every 350 ms. Everything between
+ * two phrases piles up there: the agent thinking, the agent talking, the person listening.
+ * Measured live: after 53 s of that the start of the next phrase was lost, after 85 s the
+ * speech worker died (SIGTRAP inside onnxruntime), and the phrase ended empty ten seconds
+ * later.
+ *
+ * Only a phrase goes in now, from the moment the detector confirms it, with the three
+ * seconds before. The detector confirms speech after 800 ms of it unbroken, and a short
+ * first word with a pause after it — «Так, …», «Слушай, …», «Стоп, хватит» — breaks the
+ * count: the phrase is then confirmed only on the word after, over two seconds in, and
+ * with two seconds kept «Стоп» was lost (measured live). Three cover it.
+ */
+const prerollSplices: readonly Splice[] = [
+  {
+    find: `    let currentFinalizingTurn = null;`,
+    replace: `    let currentFinalizingTurn = null;
+    // paseo-voice: between phrases the recogniser is given nothing; the last three
+    // seconds wait here for the next one.
+    const PREROLL_MS = 3000;
+    let preroll = [];
+    let prerollBytes = 0;
+    function keepPreroll(pcm16, sampleRate) {
+        preroll.push(pcm16);
+        prerollBytes += pcm16.length;
+        const limit = (PREROLL_MS * sampleRate * 2) / 1000;
+        while (preroll.length > 1 && prerollBytes - preroll[0].length >= limit) {
+            prerollBytes -= preroll.shift().length;
+        }
+    }
+    function takePreroll() {
+        const taken = preroll.length > 0 ? Buffer.concat(preroll) : null;
+        preroll = [];
+        prerollBytes = 0;
+        return taken;
+    }`,
+  },
+  {
+    find: `        params.logger.info({
+            utteranceId: state.utteranceId,
+        }, "voice_turn.speech_started");`,
+    replace: `        params.logger.info({
+            utteranceId: state.utteranceId,
+        }, "voice_turn.speech_started");
+        // paseo-voice: the phrase as it began, before the detector was sure of it.
+        const before = takePreroll();
+        if (before && sttSession) {
+            try {
+                sttSession.appendPcm16(before);
+            }
+            catch (error) {
+                handleSttError(error);
+            }
+        }`,
+  },
+  {
+    find: `                if (sttPcm16 && sttPcm16.length > 0) {
+                    try {`,
+    replace: `                if (sttPcm16 && sttPcm16.length > 0 && state.status !== "capturing") {
+                    keepPreroll(sttPcm16, currentSttSession.requiredSampleRate);
+                }
+                else if (sttPcm16 && sttPcm16.length > 0) {
+                    try {`,
+  },
+];
+
+/**
+ * The voice-activity detector lives in the same speech worker as the recogniser. When the
+ * worker dies, the recogniser is reconnected and the detector never is: its session went
+ * with the old worker, every chunk after that goes nowhere, and voice mode hears nothing
+ * more until it is switched off and on. A new detector takes its place now, and a phrase
+ * the old one was in the middle of is closed — the end of that one would never be heard.
+ */
+const detectorSplices: readonly Splice[] = [
+  {
+    find: `    const detector = params.turnDetection.createSession({`,
+    replace: `    let detector = params.turnDetection.createSession({`,
+  },
+  {
+    find: `    detector.on("speech_started", () => {
+        void runSerial(handleSpeechStarted);
+    });
+    detector.on("speech_stopped", () => {
+        void runSerial(handleSpeechStopped);
+    });
+    detector.on("error", fail);`,
+    replace: `    // paseo-voice: a detector that dies with its worker is replaced, not left deaf.
+    let detectorRecovering = false;
+    function watchDetector(session) {
+        session.on("speech_started", () => {
+            if (session === detector)
+                void runSerial(handleSpeechStarted);
+        });
+        session.on("speech_stopped", () => {
+            if (session === detector)
+                void runSerial(handleSpeechStopped);
+        });
+        session.on("error", (error) => {
+            fail(error);
+            if (session !== detector || detectorRecovering || state.status === "idle")
+                return;
+            detectorRecovering = true;
+            void runSerial(async () => {
+                try {
+                    const next = params.turnDetection.createSession({
+                        logger: params.logger.child({ component: "turn-detection" }),
+                    });
+                    watchDetector(next);
+                    await next.connect();
+                    const previous = detector;
+                    detector = next;
+                    previous.close();
+                    params.logger.info("voice_turn.detector_reconnected");
+                    if (state.status === "capturing")
+                        await handleSpeechStopped();
+                }
+                catch (failure) {
+                    params.logger.warn({ err: failure }, "voice_turn.detector_reconnect_failed");
+                }
+                finally {
+                    detectorRecovering = false;
+                }
+            });
+        });
+    }
+    watchDetector(detector);`,
+  },
+];
+
+/**
+ * The agent's voice goes to the phone as MP3 instead of raw PCM.
+ *
+ * Each sentence crosses the relay as one message, and the phone starts playing only once
+ * it holds all of it. Raw 24 kHz PCM is 48 KB a second of speech; measured on a phone, a
+ * thirteen-second sentence waited two seconds on the way, on top of the synthesis. Google's
+ * MP3 is 64 kbps, a sixth of it. Both clients already play MP3 — the phone through its file
+ * player, the desktop through Web Audio — so only the daemon's request changes, and this
+ * plugin's proxy answers it.
+ *
+ * `PASEO_VOICE_TTS_FORMAT=pcm` in the daemon's environment brings PCM back, which is how
+ * the tests compare the two.
+ */
+const formatSplices: readonly Splice[] = [
+  {
+    find: `        model: options.ttsModel,
+        responseFormat: "pcm",
+    };`,
+    replace: `        model: options.ttsModel,
+        // paseo-voice: MP3 to the phone, a sixth of the PCM; the plugin's proxy answers it.
+        responseFormat: process.env.PASEO_VOICE_TTS_FORMAT || "mp3",
+    };`,
+  },
+];
+
+/**
+ * Speech that cuts into the agent aborts whatever is playing, and the abort is lifted only
+ * when a transcript with words in it arrives. A turn that ends empty — a cough, a noise the
+ * detector took for speech, a phrase lost to a crash — leaves it standing: every reply the
+ * agent speaks after that is dropped in 0 ms, the agent none the wiser, until a phrase is
+ * recognised again. Lifted now whenever the person's turn is over, which is what the log
+ * line it follows has always said.
+ */
+const abortSplices: readonly Splice[] = [
+  {
+    find: "        this.sessionLogger.debug({ reason }, `Speech turn complete (${reason}) – resuming TTS`);",
+    replace:
+      "        this.sessionLogger.debug({ reason }, `Speech turn complete (${reason}) – resuming TTS`);\n" +
+      "        // paseo-voice: and resume it — a turn that ended empty used to leave the abort standing.\n" +
+      "        if (this.abortController.signal.aborted) {\n" +
+      "            this.createAbortController();\n" +
+      "        }",
+  },
+];
+
+/**
+ * A phone that compresses its microphone sends Opus, in voice mode and in dictation alike.
+ *
+ * The microphone streams to the daemon for as long as voice mode is on and unmuted, and
+ * for the whole of a dictation: 16 kHz PCM is about 340 kbit/s on the wire, more than a
+ * weak mobile uplink carries, and then nothing said gets through. The patched phone sends
+ * 24 kbit/s Opus instead — but only after asking this plugin whether the daemon can take
+ * it, so an unpatched daemon never sees a byte of it.
+ *
+ * The decoding itself lives in one place, the module this plugin keeps in
+ * `~/.paseo-voice/codec` (see `codec.server.ts`); both corrections below only load it and
+ * call it, one decoder per stream: a voice session, a dictation.
+ */
+const LOAD_CODEC = `// paseo-voice: the decoder this plugin keeps, loaded once a phone first sends Opus; a
+// failed load is tried again on the next chunk.
+let paseoVoiceCodec = null;
+const loadPaseoVoiceCodec = () => (paseoVoiceCodec ??= Promise.all([import("node:os"), import("node:url")])
+    .then(([os, url]) => import(url.pathToFileURL(\`\${os.homedir()}/.paseo-voice/codec/opus.mjs\`).href))
+    .catch((error) => {
+    paseoVoiceCodec = null;
+    throw error;
+}));`;
+
+const voiceOpusSplices: readonly Splice[] = [
+  {
+    find: `import { toResolver } from "../../speech/provider-resolver.js";`,
+    replace: `import { toResolver } from "../../speech/provider-resolver.js";
+${LOAD_CODEC}`,
+  },
+  {
+    find: `        await this.voiceTurnController.appendClientChunk({
+            audioBase64: msg.audio,
+            format: chunkFormat,
+        });`,
+    replace: `        // paseo-voice: Opus from a phone that compresses its microphone, as the PCM the
+        // turn controller hears.
+        let audioBase64 = msg.audio;
+        let format = chunkFormat;
+        if (chunkFormat.startsWith("audio/opus")) {
+            try {
+                audioBase64 = await (await loadPaseoVoiceCodec()).decodeOpusChunk(this, msg.audio);
+                format = "audio/pcm;rate=16000;bits=16";
+            }
+            catch (error) {
+                if (!this.paseoVoiceOpusFailed) {
+                    this.paseoVoiceOpusFailed = true;
+                    this.sessionLogger.error({ err: error }, "paseo-voice: the phone's Opus could not be decoded");
+                }
+                return;
+            }
+            if (!this.voiceTurnController) {
+                return;
+            }
+        }
+        await this.voiceTurnController.appendClientChunk({ audioBase64, format });`,
+  },
+  {
+    find: `    async stopVoiceTurnController() {
+        if (!this.voiceTurnController) {
+            return;
+        }`,
+    replace: `    async stopVoiceTurnController() {
+        // paseo-voice: the next voice session is a new Opus stream.
+        this.paseoVoiceOpusFailed = false;
+        void paseoVoiceCodec?.then((codec) => codec.freeOpus(this), () => { });
+        if (!this.voiceTurnController) {
+            return;
+        }`,
+  },
+];
+
+const dictationOpusSplices: readonly Splice[] = [
+  {
+    find: `import { parsePcmRateFromFormat, pcm16lePeakAbs } from "../speech/audio.js";`,
+    replace: `import { parsePcmRateFromFormat, pcm16lePeakAbs } from "../speech/audio.js";
+${LOAD_CODEC}`,
+  },
+  {
+    find: `        if (params.format !== state.inputFormat) {`,
+    replace: `        // paseo-voice: Opus from a phone that compresses its microphone, as the PCM this
+        // stream was started with. A chunk already here is not decoded twice.
+        if (params.format.startsWith("audio/opus")) {
+            let audioBase64 = params.audioBase64;
+            if (params.seq >= state.nextSeqToForward && !state.receivedChunks.has(params.seq)) {
+                try {
+                    audioBase64 = await (await loadPaseoVoiceCodec()).decodeOpusChunk(state, params.audioBase64);
+                }
+                catch (error) {
+                    void this.failAndCleanupDictationStream(params.dictationId, \`paseo-voice: the phone's Opus could not be decoded: \${error instanceof Error ? error.message : String(error)}\`, false);
+                    return;
+                }
+                if (this.streams.get(params.dictationId) !== state) {
+                    return;
+                }
+            }
+            params = { ...params, audioBase64, format: state.inputFormat };
+        }
+        if (params.format !== state.inputFormat) {`,
+  },
+  {
+    find: `        this.streams.delete(dictationId);`,
+    replace: `        this.streams.delete(dictationId);
+        // paseo-voice: its Opus decoder goes with it.
+        void paseoVoiceCodec?.then((codec) => codec.freeOpus(state), () => { });`,
+  },
+];
+
+/**
  * Makes the desktop client ask this plugin for its waiting cue instead of playing the
  * one baked into its bundle.
  *
@@ -194,18 +477,50 @@ export const TARGETS: readonly Target[] = [
     kind: "asar",
     entry: "node_modules/@getpaseo/server/dist/server/server/agent/tts-manager.js",
     splices: ttsSplices,
-    // Paseo 0.10.3 and 0.11.1, byte for byte the same file.
+    // Paseo 0.10.3, 0.11.1 and 0.11.2, byte for byte the same file.
     verified: ["c0175e3a58b1b6076f7792e5480bd9f5a39d3e1b720427833d89e782d60b4508"],
   },
   {
-    id: "mute",
-    title: "Мьют отправляет фразу",
-    note: "Сейчас мьют обрывает поток, и сказанное висит неотправленным",
+    // One file, so one correction: the archive keeps one original per file.
+    id: "listen",
+    title: "Голосовой ввод",
+    note: "Мьют отправляет фразу, распознавание не копит тишину между фразами, детектор речи поднимается после падения",
     kind: "asar",
     entry: "node_modules/@getpaseo/server/dist/server/server/session/voice/voice-turn-controller.js",
-    splices: muteSplices,
-    // Paseo 0.10.3 and 0.11.1, byte for byte the same file.
+    splices: [...muteSplices, ...prerollSplices, ...detectorSplices],
+    // Paseo 0.10.3, 0.11.1 and 0.11.2, byte for byte the same file.
     verified: ["143bec13ce0c86542ede7f943c543cb90e58179e88a56efeacdf2896a8000697"],
+  },
+  {
+    id: "format",
+    title: "Голос агента в MP3",
+    note: "Голос агента идёт на телефон в MP3, в шесть раз легче: первое слово звучит раньше",
+    kind: "asar",
+    entry: "node_modules/@getpaseo/server/dist/server/server/speech/providers/openai/config.js",
+    splices: formatSplices,
+    // Paseo 0.11.2.
+    verified: ["f936779bd4067b351eaaf127f098f9e7ece5458e50644e124ea8a4e0f2e09275"],
+  },
+  {
+    // One file, so one correction, as above.
+    id: "session",
+    title: "Голосовая сессия",
+    note: "Ответы агента снова звучат после нераспознанной фразы; голос с телефона принимается сжатым, в Opus",
+    kind: "asar",
+    entry: "node_modules/@getpaseo/server/dist/server/server/session/voice/voice-session.js",
+    splices: [...abortSplices, ...voiceOpusSplices],
+    // Paseo 0.11.1 and 0.11.2, byte for byte the same file.
+    verified: ["0db7bd264ff2416b2ead22abdee4935f060ae1e341f9a2641c0f82a146e15fe3"],
+  },
+  {
+    id: "dictation",
+    title: "Диктовка в Opus",
+    note: "Голос с телефона при диктовке принимается сжатым, в Opus",
+    kind: "asar",
+    entry: "node_modules/@getpaseo/server/dist/server/server/dictation/dictation-stream-manager.js",
+    splices: dictationOpusSplices,
+    // Paseo 0.11.2.
+    verified: ["e188e9451878e610356af8ea75716b7a05963ae414d11bfa8f89bfe0f89bca90"],
   },
   {
     id: "cue",
@@ -289,9 +604,19 @@ function parses(text: string): boolean {
 /** What one correction calls for, given the file it would go into. */
 export type Verdict =
   | { kind: "in-place" }
-  | { kind: "write"; text: string }
+  /** `original` is the clean file `text` was made from: the one to keep for a revert. */
+  | { kind: "write"; text: string; original: string }
   | { kind: "unverified"; sha: string; anchorsFit: boolean }
   | { kind: "refused"; why: string };
+
+/** What a correction makes of a clean file, exactly as `judge` would write it; null if it would not. */
+function made(target: Target, original: string, size: number): string | null {
+  const outcome = patchSource(original, target.splices);
+  if (!outcome.ok) {
+    return null;
+  }
+  return target.kind === "file" ? outcome.text : fit(outcome.text, size);
+}
 
 /**
  * The whole decision, pure so that it can be proved.
@@ -304,12 +629,34 @@ export type Verdict =
  * the first sentence; in the mute correction's case inside a timer callback, with
  * nothing around it to catch the throw. A hash notices any change at all. The price is
  * an alarm about a change that turns out harmless, which costs one look at a diff.
+ *
+ * A file that already carries a correction is judged by the `original` kept beside it.
+ * The marker only says that some version of the correction is in there: a plugin update
+ * that changes one would otherwise find the marker, call it in place, and leave the old
+ * version running for good.
  */
-export function judge(target: Target, source: { text: string; size: number }, auto: boolean): Verdict {
-  const outcome = patchSource(source.text, target.splices);
-  if (!outcome.ok && outcome.reason === "already-patched") {
+export function judge(
+  target: Target,
+  source: { text: string; size: number },
+  auto: boolean,
+  original?: string,
+): Verdict {
+  if (!source.text.includes(MARKER)) {
+    return judgeClean(target, source, auto);
+  }
+  if (original === undefined) {
+    return { kind: "refused", why: "правка уже наложена, а оригинала рядом нет — не проверить, та ли это версия" };
+  }
+  if (made(target, original, source.size) === source.text) {
     return { kind: "in-place" };
   }
+  // An earlier version of the correction: made again from the original, through every
+  // check a clean file goes through.
+  return judgeClean(target, { text: original, size: source.size }, auto);
+}
+
+function judgeClean(target: Target, source: { text: string; size: number }, auto: boolean): Verdict {
+  const outcome = patchSource(source.text, target.splices);
   if (auto && target.verified) {
     const sha = sha256(source.text);
     if (!target.verified.includes(sha)) {
@@ -317,17 +664,23 @@ export function judge(target: Target, source: { text: string; size: number }, au
     }
   }
   if (!outcome.ok) {
-    return { kind: "refused", why: "незнакомая версия Paseo — якоря не совпали" };
+    return {
+      kind: "refused",
+      why:
+        outcome.reason === "already-patched"
+          ? "сохранённый оригинал сам с правкой — переустанови Paseo"
+          : "незнакомая версия Paseo — якоря не совпали",
+    };
   }
   if (target.kind === "file") {
     return parses(outcome.text)
-      ? { kind: "write", text: outcome.text }
+      ? { kind: "write", text: outcome.text, original: source.text }
       : { kind: "refused", why: "после правки бандл не разбирается — с ним Paseo не запустится" };
   }
   const fitted = fit(outcome.text, source.size);
   return fitted === null
     ? { kind: "refused", why: "правка не влезает в исходный размер" }
-    : { kind: "write", text: fitted };
+    : { kind: "write", text: fitted, original: source.text };
 }
 
 /**
@@ -473,6 +826,23 @@ async function backupOf(target: Target): Promise<string> {
   return path.join(paths.root, "patches", `${name || target.id}.original`);
 }
 
+/**
+ * The clean file kept beside a patched one. Undefined for a clean file, and for a patched
+ * one with nothing kept — or with a backup of another size, which cannot be the original
+ * of an archive entry that has to keep its size.
+ */
+async function originalOf(target: Target, source: { text: string; size: number }): Promise<string | undefined> {
+  if (!source.text.includes(MARKER)) {
+    return undefined;
+  }
+  try {
+    const original = await readFile(await backupOf(target), "utf8");
+    return target.kind === "asar" && Buffer.byteLength(original) !== source.size ? undefined : original;
+  } catch {
+    return undefined;
+  }
+}
+
 /** Reads a target's current text, wherever it lives. */
 async function textOf(archive: Archive, target: Target): Promise<{ text: string; size: number } | null> {
   if (target.kind === "file") {
@@ -600,16 +970,15 @@ let remembered: { of: string; state: PatchState } | null = null;
  * the expensive part runs.
  */
 export async function fingerprintOf(files: string[]): Promise<string> {
-  const parts = await Promise.all(
-    files.map(async (file) => {
-      try {
-        const { mtimeMs, size } = await stat(file);
-        return `${file}:${mtimeMs}:${size}`;
-      } catch {
-        return `${file}:absent`;
-      }
-    }),
-  );
+  const parts = files.map((file) => {
+    try {
+      // On disk, not as Electron shows an archive: there it is "written now" every time.
+      const { mtimeMs, size } = statOnDisk(file);
+      return `${file}:${mtimeMs}:${size}`;
+    } catch {
+      return `${file}:absent`;
+    }
+  });
   return parts.join("|");
 }
 
@@ -673,13 +1042,16 @@ export async function inspect(): Promise<PatchState> {
         });
         continue;
       }
-      const outcome = patchSource(source.text, target.splices);
+      const original = await originalOf(target, source);
+      // What the correction would be made from: the file itself when clean, the original
+      // beside it when not, and nothing when a patched file has lost its original.
+      const base = source.text.includes(MARKER) ? original : source.text;
       targets.push({
         id: target.id,
         title: target.title,
         note: target.note,
-        applied: !outcome.ok && outcome.reason === "already-patched",
-        unknownVersion: !outcome.ok && outcome.reason === "unknown-version",
+        applied: judge(target, source, false, original).kind === "in-place",
+        unknownVersion: base !== undefined && !patchSource(base, target.splices).ok,
         alert: "",
       });
     }
@@ -716,12 +1088,12 @@ export async function apply(): Promise<void> {
     if (!source) {
       throw new Error(`${target.title}: файл не найден — Paseo обновился`);
     }
-    const verdict = judge(target, source, false);
+    const verdict = judge(target, source, false, await originalOf(target, source));
     if (verdict.kind === "refused") {
       throw new Error(`${target.title}: ${verdict.why}`);
     }
     if (verdict.kind === "write") {
-      await write(archive, target, source.text, verdict.text);
+      await write(archive, target, verdict.original, verdict.text);
     }
   }
   // Done by hand, so it is what this person wants after the next update as well.
@@ -826,16 +1198,17 @@ export async function autoApply(): Promise<AutoReport | null> {
         alert(`в Paseo ${version} нет файла, в который она ложится`);
         continue;
       }
-      const verdict = judge(target, source, true);
+      const original = await originalOf(target, source);
+      const verdict = judge(target, source, true, original);
       if (verdict.kind === "write") {
-        await write(archive, target, source.text, verdict.text);
+        await write(archive, target, verdict.original, verdict.text);
         report.written.push(target.id);
         report.archived ||= target.kind === "asar";
       } else if (verdict.kind === "refused") {
         alert(verdict.why);
       } else if (verdict.kind === "unverified") {
         const pending = await pendingOf(target);
-        await writeFile(pending, source.text, { mode: 0o600 });
+        await writeFile(pending, original ?? source.text, { mode: 0o600 });
         const diff = `diff -u ${shown(await backupOf(target))} ${shown(pending)}`;
         alert(
           verdict.anchorsFit

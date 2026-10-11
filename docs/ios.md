@@ -73,6 +73,18 @@ compile — see [e2e.md](e2e.md#trying-a-fix-before-it-ships).
   already reach the phone; the session context now passes them to the runtime, which
   keeps the cue out while a call is in flight and for three seconds after the last one
   ends. Music while the agent thinks, and only then — `e2e/` proves both halves.
+- **The microphone goes up as Opus**, in voice mode and in dictation. 16 kHz PCM is
+  about 340 kbit/s on the wire once it is base64 — more than a weak mobile uplink carries,
+  and then nothing said gets through, or it crawls. Opus at 24 kbit/s is a tenth of it,
+  and iOS encodes it itself through AudioToolbox, so nothing is linked into the app.
+  One module does it for both modes, `src/audio/opus-uplink.ts`, copied in from
+  `ios-build/opus/` with the encoder, `VoiceOpusEncoder.swift`, which goes into the
+  native module beside the audio engine. Before every voice session and every dictation
+  the phone asks this plugin whether the daemon can decode Opus, and the plugin says yes
+  only when its corrections that do it are loaded in the daemon running now; otherwise
+  — the web, no plugin, an older one, an unpatched daemon, an encoder that fails — the
+  microphone goes as PCM, as upstream sends it. See
+  [patches.md](patches.md#голос-с-телефона-в-opus).
 - **The test pinning the old tone's length** is skipped, or it fails the build.
 - **The bundle identifier** becomes `sh.paseo.debug.<team>`. Plain `sh.paseo.debug` is
   already registered to Paseo's own team and cannot be claimed.
@@ -90,6 +102,12 @@ automatic.
 A **free Apple ID** works and signs for **seven days**. After that the app refuses to
 launch and the script has to be run again. A paid certificate makes it permanent and
 exportable.
+
+Xcode reuses the profile it issued last until it expires, so a build made on day six is
+signed with one that has a day left: installing it the next day fails with «This
+provisioning profile has expired», and so does launching the copy already on the phone.
+Run the build again; with the Apple ID signed in, `-allowProvisioningUpdates` gets a new
+profile. Without one it stops at «No Accounts».
 
 Push notifications are removed from the entitlements, because a personal team cannot
 sign them. Set `KEEP_PUSH=1` to keep them if you have a real team.

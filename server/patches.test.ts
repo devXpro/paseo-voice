@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdtemp, readFile, rm, utimes, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
@@ -10,7 +11,7 @@ import { asarIntegrityOn, fingerprintOf, fit, judge, MARKER, patchSource, TARGET
 /** The shape of the two functions this corrects, as Paseo 0.10.2 compiles them. */
 const splicesOf = (id: string) => TARGETS.find((target) => target.id === id)!.splices;
 const TTS = splicesOf("drain");
-const MUTE = splicesOf("mute");
+const LISTEN = splicesOf("listen");
 
 const ORIGINAL = `const MAX_TTS_SEGMENT_CHARS = 260;
 function splitTextForTts(text) {
@@ -138,9 +139,35 @@ test("a changed file whose anchors are gone is reported as one to rewrite", () =
   });
 });
 
+/** The file as `judge` would write it, with the size of the entry it went into. */
+function written(target: typeof REVIEWED, original: string) {
+  const verdict = judge(target, sized(original), true);
+  assert.equal(verdict.kind, "write");
+  return { text: verdict.kind === "write" ? verdict.text : "", size: sized(original).size };
+}
+
 test("a correction already in place is left as it is", () => {
-  const once = patchSource(ORIGINAL, TTS);
-  assert.deepEqual(judge(REVIEWED, sized(once.ok ? once.text : ""), true), { kind: "in-place" });
+  assert.deepEqual(judge(REVIEWED, written(REVIEWED, ORIGINAL), true, ORIGINAL), { kind: "in-place" });
+});
+
+test("an earlier version of a correction is made again from the original kept beside it", () => {
+  // What a plugin update that changes a correction looks like from here: the marker is
+  // there, but what is under it is not what the correction makes now.
+  const earlier = { ...REVIEWED, splices: REVIEWED.splices.slice(0, 1) };
+  const verdict = judge(REVIEWED, written(earlier, ORIGINAL), true, ORIGINAL);
+  assert.equal(verdict.kind, "write");
+  assert.ok(verdict.kind === "write" && verdict.text.includes("for (const sentence of grouped) {"), "the new version, whole");
+  assert.equal(verdict.kind === "write" && verdict.original, ORIGINAL, "and the original stays the one to revert to");
+});
+
+test("an earlier version on a file nobody reviewed is still not rewritten by itself", () => {
+  const earlier = { ...REVIEWED, splices: REVIEWED.splices.slice(0, 1) };
+  const unreviewed = { ...REVIEWED, verified: ["0".repeat(64)] };
+  assert.equal(judge(unreviewed, written(earlier, ORIGINAL), true, ORIGINAL).kind, "unverified");
+});
+
+test("a patched file with nothing kept beside it is refused rather than taken for current", () => {
+  assert.equal(judge(REVIEWED, written(REVIEWED, ORIGINAL), true).kind, "refused");
 });
 
 /**
@@ -172,17 +199,44 @@ for (const target of TARGETS.filter((one) => one.kind === "asar")) {
         return;
       }
     }
+    const verdict = judge(target, { text: source, size: Buffer.byteLength(source) }, true);
     assert.equal(
-      judge(target, { text: source, size: Buffer.byteLength(source) }, true).kind,
+      verdict.kind,
       "write",
       `Paseo изменил ${name}: сравни с оригиналом, поправь правку и добавь в verified ${sha256(source)}`,
     );
+    // The daemon imports these as modules when it starts: one that does not parse is a
+    // daemon that does not start.
+    const dir = await mkdtemp(path.join(tmpdir(), "voice-check-"));
+    try {
+      const file = path.join(dir, `${target.id}.mjs`);
+      await writeFile(file, verdict.kind === "write" ? verdict.text : "");
+      execFileSync(process.execPath, ["--check", file], { stdio: "pipe" });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 }
 
-test("the mute correction adds the watchdog, the flush and the chunk timestamp", () => {
-  const vtc = `
+/** The lines of `voice-turn-controller.js` the voice input correction is anchored on. */
+const VTC = `
+    const detector = params.turnDetection.createSession({
+        logger: params.logger.child({ component: "turn-detection" }),
+    });
     let state = { status: "idle" };
+    let currentFinalizingTurn = null;
+    async function handleSpeechStarted() {
+        params.logger.info({
+            utteranceId: state.utteranceId,
+        }, "voice_turn.speech_started");
+    }
+    detector.on("speech_started", () => {
+        void runSerial(handleSpeechStarted);
+    });
+    detector.on("speech_stopped", () => {
+        void runSerial(handleSpeechStopped);
+    });
+    detector.on("error", fail);
     async function start() {
             await detector.connect();
     }
@@ -191,9 +245,15 @@ test("the mute correction adds the watchdog, the flush and the chunk timestamp",
     }
     async function append(input) {
                 const pcm16 = Buffer.from(input.audioBase64, "base64");
+                if (sttPcm16 && sttPcm16.length > 0) {
+                    try {
+                        currentSttSession?.appendPcm16(sttPcm16);
+                    }
     }
 `;
-  const outcome = patchSource(vtc, MUTE);
+
+test("the mute part adds the watchdog, the flush and the chunk timestamp", () => {
+  const outcome = patchSource(VTC, LISTEN);
   assert.equal(outcome.ok, true);
   const text = outcome.ok ? outcome.text : "";
   assert.ok(text.includes("voice_turn.client_audio_stalled"), "сторож обязан логировать, когда сработал");
@@ -201,6 +261,97 @@ test("the mute correction adds the watchdog, the flush and the chunk timestamp",
   assert.ok(text.includes("startStallWatch();"), "запускаться вместе с детектором");
   assert.ok(text.includes("stopStallWatch();"), "и останавливаться вместе с ним");
   assert.ok(text.includes("lastChunkAt = Date.now();"), "и видеть каждый приходящий кусок звука");
+});
+
+test("between phrases the recogniser gets nothing but the moments before the next one", () => {
+  const outcome = patchSource(VTC, LISTEN);
+  const text = outcome.ok ? outcome.text : "";
+  assert.ok(
+    text.includes(`if (sttPcm16 && sttPcm16.length > 0 && state.status !== "capturing") {`) &&
+      text.includes("keepPreroll(sttPcm16, currentSttSession.requiredSampleRate);"),
+    "звук между фразами обязан оседать в коротком буфере, а не в распознавателе",
+  );
+  // Handed over where the phrase is confirmed, after the line that logs it.
+  const confirmed = text.indexOf(`"voice_turn.speech_started");`);
+  const handed = text.indexOf("sttSession.appendPcm16(before);");
+  assert.ok(confirmed !== -1 && handed > confirmed, "а начало фразы — уходить в распознаватель, как только она подтверждена");
+});
+
+test("a detector that dies with the speech worker is replaced", () => {
+  const outcome = patchSource(VTC, LISTEN);
+  const text = outcome.ok ? outcome.text : "";
+  assert.ok(text.includes("let detector = params.turnDetection.createSession({"), "детектор обязан быть заменяемым");
+  assert.ok(!text.includes(`detector.on("error", fail);`), "ошибку детектора больше нельзя просто логировать");
+  assert.ok(text.includes("watchDetector(detector);") && text.includes("watchDetector(next);"), text);
+  assert.ok(text.includes("voice_turn.detector_reconnected"), "и замена обязана быть видна в логе");
+  // A phrase the dead detector was in the middle of has no end coming.
+  assert.ok(text.includes(`if (state.status === "capturing")\n                        await handleSpeechStopped();`), text);
+});
+
+test("an empty turn of the person's lifts the abort it started", () => {
+  const session = [
+    "    clearSpeechInProgress(reason) {",
+    "        if (!this.speechInProgress) {",
+    "            return;",
+    "        }",
+    "        this.speechInProgress = false;",
+    "        this.sessionLogger.debug({ reason }, `Speech turn complete (${reason}) – resuming TTS`);",
+    "    }",
+  ].join("\n");
+  const outcome = patchSource(session, ABORT);
+  assert.equal(outcome.ok, true);
+  const text = outcome.ok ? outcome.text : "";
+  assert.ok(text.includes("if (this.abortController.signal.aborted) {\n            this.createAbortController();"), text);
+});
+
+/** The session correction, split back into its two parts. */
+const SESSION = splicesOf("session");
+const ABORT = SESSION.slice(0, 1);
+const OPUS = SESSION.slice(1);
+
+test("Opus from the phone is decoded before the turn controller sees it", () => {
+  const session = [
+    'import { toResolver } from "../../speech/provider-resolver.js";',
+    "    async stopVoiceTurnController() {",
+    "        if (!this.voiceTurnController) {",
+    "            return;",
+    "        }",
+    "    }",
+    "    async forwardAudioChunkToVoiceTurn(msg, chunkFormat) {",
+    "        await this.voiceTurnController.appendClientChunk({",
+    "            audioBase64: msg.audio,",
+    "            format: chunkFormat,",
+    "        });",
+    "    }",
+  ].join("\n");
+  const outcome = patchSource(session, OPUS);
+  assert.equal(outcome.ok, true);
+  const text = outcome.ok ? outcome.text : "";
+  assert.ok(text.includes('chunkFormat.startsWith("audio/opus")'), "Opus is told apart by its format");
+  assert.ok(text.includes('format = "audio/pcm;rate=16000;bits=16"'), "and handed on as 16 kHz PCM");
+  assert.ok(text.includes(".paseo-voice/codec/opus.mjs"), "by the decoder the plugin keeps");
+  assert.ok(text.includes("decodeOpusChunk(this, msg.audio)"), "which does the decoding, not the correction");
+  assert.ok(text.includes("codec.freeOpus(this)"), "and which a stopped voice session lets go of");
+});
+
+test("dictation decodes Opus the same way, once per chunk, before the stream sees it", () => {
+  const manager = [
+    'import { parsePcmRateFromFormat, pcm16lePeakAbs } from "../speech/audio.js";',
+    "    async handleChunk(params) {",
+    "        if (params.format !== state.inputFormat) {",
+    "        }",
+    "    }",
+    "    cleanupDictationStream(dictationId) {",
+    "        this.streams.delete(dictationId);",
+    "    }",
+  ].join("\n");
+  const outcome = patchSource(manager, splicesOf("dictation"));
+  assert.equal(outcome.ok, true);
+  const text = outcome.ok ? outcome.text : "";
+  assert.ok(text.includes("decodeOpusChunk(state, params.audioBase64)"), "the shared decoder, one per dictation");
+  assert.ok(text.includes("!state.receivedChunks.has(params.seq)"), "and a chunk that arrives twice is decoded once");
+  assert.ok(text.includes("params = { ...params, audioBase64, format: state.inputFormat };"), "then it is the stream's own PCM");
+  assert.ok(text.includes("codec.freeOpus(state)"), "and the decoder goes with the stream");
 });
 
 /** The source Paseo plays the cue from, as Metro minifies it. */

@@ -62,6 +62,8 @@ export type PhoneOptions = {
   setVoiceMode?(enabled: boolean, agentId?: string): Promise<void>;
   /** The patched phone asks the plugin for its cue. Leave out for Paseo's built-in tone. */
   fetchCue?(have: string): Promise<CueAnswer>;
+  /** The patched phone asks whether to send its microphone as Opus. Leave out for PCM. */
+  fetchVoiceCodec?(): Promise<{ opus: boolean } | null>;
 };
 
 const SERVER_INFO = (serverId: string) => ({
@@ -117,6 +119,7 @@ export async function createPhone(options: PhoneOptions) {
 
   let microphoneBytes = 0;
   const fetchCue = options.fetchCue;
+  const fetchVoiceCodec = options.fetchVoiceCodec;
   runtime.registerSession({
     serverId,
     async setVoiceMode(enabled: boolean, agent?: string) {
@@ -137,6 +140,15 @@ export async function createPhone(options: PhoneOptions) {
       timeline.note("phone.confirms", chunkId);
       options.audioPlayed(chunkId);
     },
+    ...(fetchVoiceCodec
+      ? {
+          async fetchVoiceCodec() {
+            const answer = await fetchVoiceCodec();
+            timeline.note("phone.codec", answer?.opus ? "opus" : "pcm");
+            return answer;
+          },
+        }
+      : {}),
     ...(fetchCue
       ? {
           async fetchCue(have: string) {

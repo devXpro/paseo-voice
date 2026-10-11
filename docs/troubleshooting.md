@@ -19,12 +19,47 @@ a sentence meant to be silent, so it is dropped quietly.
 
 ## I press mute and nothing is sent
 
-Apply **Мьют отправляет фразу**. Without it the audio stream simply stops, the silence
+Apply **Голосовой ввод**. Without it the audio stream simply stops, the silence
 detector never sees silence, and what you dictated waits.
+
+## The first thing I say is heard, and later ones are not
+
+Typically: a phrase or two work, then one comes out cut short — its beginning missing —
+or nothing happens at all, and from then on nothing you say is heard. If you cut into
+the agent at that moment, it stops working and never hears why.
+
+Paseo's recogniser was given everything the microphone heard since your last phrase,
+and decoded all of it again every 350 ms. A minute of the agent working while you
+listen, and the start of your next phrase is lost; a minute and a half, and the speech
+worker dies — taking the voice detector with it, which nothing brought back. Apply
+**Голосовой ввод**; the details are in [patches.md](patches.md#голосовой-ввод).
+
+Until then, listening with mute on keeps the pile from growing, and switching voice
+mode off and on brings back a detector that died.
+
+## The agent stops talking, though it still works
+
+It answers in text, and `speak` calls finish at once with nothing heard — usually after
+something you said was not recognised: a cough, a noise, a phrase lost to the bug above.
+Your speech aborted its voice, and only a recognised phrase used to lift that. Apply
+**Агент не немеет**; until then, say anything it can recognise.
+
+## On mobile internet voice mode crawls, or hears nothing
+
+The phone streams its microphone uncompressed — about 340 kbit/s once it is base64 — and
+a weak uplink does not carry it: what is said arrives late, or not at all, and dictation
+the same. Apply **Патч Paseo**, restart Paseo, and use an app built with `ios-build/`:
+the microphone then goes as Opus, a tenth of it, in voice mode and in dictation. The App
+Store app keeps sending PCM. [patches.md](patches.md#голос-с-телефона-в-opus) has how
+the phone and the daemon agree on it.
+
+If a phone built with `ios-build/` fails to dictate or is not heard in voice mode, rule
+the compression out first: `touch ~/.paseo-voice/opus-off`, and the next dictation goes
+as PCM. The daemon log says which way each phone was told — «a phone asked about Opus».
 
 ## Long pauses between sentences
 
-Two causes, and they stack.
+Three causes, and they stack.
 
 The local engine synthesises slower than it speaks, so each sentence boundary is a
 wait. Switch to Google, which runs about four times faster than real time.
@@ -32,6 +67,10 @@ wait. Switch to Google, which runs about four times faster than real time.
 And Paseo splits on every full stop without merging, so each fragment is its own
 request and its own round trip. **Читать звук сразу** merges up to the 260-character
 limit Paseo already defines.
+
+And each sentence crosses to the phone whole before it plays: uncompressed, a
+thirteen-second one waited two seconds on the way. The patch sends it as MP3, a sixth
+of that. See [patches.md](patches.md#голос-агента-в-mp3).
 
 ## An answer stops halfway, and music plays where the rest should be
 
@@ -49,6 +88,13 @@ agent speaks — rebuild it. On the desktop it is still so: the desktop correcti
 shortens the wait before the cue, and holding it back for a whole `speak` call is, so
 far, the phone build's alone. See [ios.md](ios.md#the-corrections-it-applies).
 
+## On the local engine every sentence fails with «для MP3 нужен lame или ffmpeg»
+
+With the patch in place the daemon asks for the agent's voice as MP3. Google encodes it
+itself; the local engine's audio is encoded on this Mac, by `lame` or `ffmpeg`, and with
+neither installed nothing can be spoken. `brew install lame` and it speaks again, no
+restart needed. A built-in encoder that needs neither is coming in the next release.
+
 ## Every sentence sounds like a different person
 
 **Ровный тон**, on the local engine. The engine seeds itself from the clock and Paseo
@@ -59,6 +105,9 @@ have this problem.
 
 The mobile app downsamples 24 kHz to 16 kHz with no anti-aliasing filter. Turn on
 **Чистый звук на телефоне**. [voices.md](voices.md) has the measurements.
+
+This is PCM only. With the patch in place the agent's voice arrives as MP3, which the
+phone's own player decodes at its full 24 kHz, and the setting no longer matters.
 
 ## The voice list is empty
 
@@ -107,7 +156,9 @@ It was built as Debug, which produces a dev client that looks for a Metro server
 
 ## The app stopped launching after a week
 
-A free Apple ID signs for seven days. Run `ios-build/build.sh` again.
+A free Apple ID signs for seven days. Run `ios-build/build.sh` again. Installing a
+build fails the same way — «This provisioning profile has expired» — when Xcode reused
+a profile that ran out after the build; see [ios.md](ios.md#signing).
 
 ## `build.sh` ends in an error at 7/7 with no phone attached
 

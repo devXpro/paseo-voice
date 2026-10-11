@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { readdir, stat } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
@@ -19,6 +20,7 @@ import { folder as cueFolder, list as listCues } from "./cue.server.ts";
 import { type GoogleVoice, hintOf, listVoices, readKey, writeKey } from "./google.server.ts";
 import { paths } from "./paths.server.ts";
 import { asPrompt, mine } from "./vocabulary.server.ts";
+import { codecPresent, daemonLoadedArchive, ensureCodec } from "./codec.server.ts";
 import { notify } from "./notify.server.ts";
 import {
   apply as applyPatches,
@@ -78,6 +80,8 @@ export type Controller = {
   stopRecogniser(): void;
   /** Puts the corrections back after a Paseo update, or says loudly why it could not. */
   autoPatch(): Promise<void>;
+  /** Whether a phone may send its microphone as Opus to the daemon running now. */
+  opusReady(): Promise<boolean>;
   /** The live choice the proxy reads on every sentence. */
   choice(): Promise<Stored & { googleKey: string }>;
 };
@@ -676,6 +680,37 @@ export function createController(options: {
      */
     stopRecogniser() {
       recogniser.stop();
+    },
+
+    async opusReady() {
+      // Said in the log every time a phone asks, with the reason: it is the one place that
+      // tells whether a phone's microphone is coming in compressed.
+      const answer = (opus: boolean, why: string) => {
+        log(`voice: a phone asked about Opus: ${opus ? "yes" : `no, ${why}`}`);
+        return opus;
+      };
+      // By hand, for a phone build that misbehaves: while this file exists the answer is no
+      // and every phone sends PCM. See docs/troubleshooting.md.
+      const off = path.join(paths.root, "opus-off");
+      if (existsSync(off)) {
+        return answer(false, `switched off by hand: ${off}`);
+      }
+      if (!codecPresent()) {
+        // Fetched at start; if that failed — no network then — try again for next time.
+        void ensureCodec().catch((failure: unknown) => log(`voice: Opus decoder: ${String(failure)}`));
+        return answer(false, "the decoder is not fetched yet");
+      }
+      // Both, or neither: the phone has one answer for voice mode and dictation.
+      const state = await inspectPatches();
+      const decoding = ["session", "dictation"].every((id) => state.targets.find((one) => one.id === id)?.applied);
+      if (!decoding) {
+        return answer(false, "the corrections that decode it are not in Paseo");
+      }
+      const uptime = await daemonUptime();
+      if (!(await daemonLoadedArchive(state.archivePath, uptime))) {
+        return answer(false, `the daemon (up ${uptime ?? "?"} s) started before they were written into ${state.archivePath || "?"}`);
+      }
+      return answer(true, "");
     },
   };
 }

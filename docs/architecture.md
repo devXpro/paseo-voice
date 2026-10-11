@@ -67,11 +67,14 @@ nothing is installed at runtime.
 | `proxy.server.ts` | The HTTP server on `:8123`. |
 | `google.server.ts` | Google's API: voices, synthesis, billing families, the key. |
 | `engine.server.ts` | Starting, stopping and health-checking the local binary. |
-| `patches.server.ts` | The three corrections: applying, reverting, and putting them back after an update. |
+| `patches.server.ts` | The corrections: applying, reverting, putting them back after an update, and replacing an earlier version of one. |
+| `../ios-build/opus/` | What the phone build gets for Opus: the Swift encoder and `opus-uplink.ts`, the one module voice mode and dictation send the microphone through. |
 | `asar.server.ts` | Just enough of the asar format to read and overwrite one entry. |
 | `cue.server.ts` | Rendering the waiting music; decoding, levelling, caching. |
 | `catalogue.server.ts` | The four CC BY tracks: URLs, hashes, attribution. |
 | `pcm.server.ts` | Trimming, WAV headers, the low-pass filter. |
+| `mp3.server.ts` | MP3 for the agent's voice: reading an MP3's length from its frames, and encoding the local engine's PCM through `lame` or `ffmpeg`. |
+| `codec.server.ts` | The Opus decoder the daemon loads to hear a compressed microphone: fetched from npm and checked, written to `~/.paseo-voice/codec` with the one function both daemon corrections call. |
 | `usage.server.ts` | Characters per family per month, and what they cost. |
 | `state.server.ts` | The stored choice, with its defaults and its clamps. |
 | `config.server.ts` | Reading and writing `~/.paseo/config.json`. |
