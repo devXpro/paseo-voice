@@ -96,9 +96,12 @@ await splice(
   "the gap between repeats",
 );
 
-// 2b. The wait before the first play. Upstream added it so the cue would not fire in
-//     the pauses between spoken sentences; the server-side corrections removed those
-//     pauses, so all it does here is a second and a half of silence before the music.
+// 2b. The wait before the first play. Upstream's second and a half is a guess at
+//     "longer than the pause between two spoken sentences", so the cue would not fire
+//     inside a reply. Those pauses are real — the daemon sends the next sentence only
+//     once the phone has confirmed the last, a round trip through the relay — but
+//     correction 7 below knows when a reply is in progress instead of guessing, which
+//     leaves this wait to mean only how soon the music starts once the agent thinks.
 await splice(
   app("src/voice/voice-runtime.ts"),
   "const THINKING_TONE_MIN_SILENCE_MS = 1500;",
@@ -287,6 +290,149 @@ await splice(
       return engine ? { ...pluginReactNativeRuntime, audioEngine: engine } : pluginReactNativeRuntime;
     }`,
   "plugins can reach the audio engine",
+);
+
+/**
+ * 7. The cue knows when the agent is speaking.
+ *
+ * The rule is music while the agent thinks, and only then. But a spoken reply arrives
+ * as separate sentences, each sent once the phone has confirmed the one before, and the
+ * runtime saw only that — a pause, so the cue came in between sentences and again after
+ * the last one, in the second the model takes to end its turn. Upstream guessed its way
+ * around the first with a 1.5 s wait; neither guess covers the second.
+ *
+ * The daemon already says when the agent is speaking: `speak` is a tool call, and its
+ * `running` and `completed` reach the phone in the agent's stream, before the first
+ * sentence and after the last. Nothing passed them to the runtime. Now the session
+ * context does, the runtime keeps the cue out while any call is in flight, and for a
+ * few seconds after the last one ends — long enough for a turn to close quietly, short
+ * enough that an agent which says "running the tests" and gets on with it has its
+ * music back.
+ *
+ * Proved in `e2e/`: red before, green after, and "the cue comes back while the agent
+ * works on after saying something" guards against a fix that only silences.
+ */
+await splice(
+  app("src/voice/voice-runtime.ts"),
+  "const THINKING_TONE_MIN_SILENCE_MS = 250;",
+  `const THINKING_TONE_MIN_SILENCE_MS = 250;
+/** paseo-voice: how long the cue stays away once the agent has stopped speaking. */
+const THINKING_TONE_AFTER_SPEECH_MS = 3000;`,
+  "how long the cue waits after the agent speaks",
+);
+
+await splice(
+  app("src/voice/voice-runtime.ts"),
+  `  onTurnEvent(serverId: string, agentId: string, eventType: TurnEventType): void;
+}`,
+  `  onTurnEvent(serverId: string, agentId: string, eventType: TurnEventType): void;
+  /** paseo-voice: a \`speak\` tool call of the agent started (\`running\`) or ended. */
+  onSpeakToolCall(serverId: string, agentId: string, callId: string, status: string): void;
+}`,
+  "the runtime can be told about speak calls",
+);
+
+await splice(
+  app("src/voice/voice-runtime.ts"),
+  `  const cue: CueState = {
+    controller: null,
+    timeout: null,
+  };`,
+  `  const cue: CueState = {
+    controller: null,
+    timeout: null,
+  };
+  // paseo-voice: the agent's speak calls in flight, and when the last one ended.
+  const speaking = { calls: new Set<string>(), endedAt: 0 };`,
+  "the runtime keeps track of speak calls",
+);
+
+await splice(
+  app("src/voice/voice-runtime.ts"),
+  `      state.snapshot.phase === "waiting" &&
+      !state.telemetry.isSpeaking
+    );`,
+  `      state.snapshot.phase === "waiting" &&
+      !state.telemetry.isSpeaking &&
+      speaking.calls.size === 0
+    );`,
+  "no cue while the agent is speaking",
+);
+
+await splice(
+  app("src/voice/voice-runtime.ts"),
+  "    cue.timeout = setTimeout(playNext, THINKING_TONE_MIN_SILENCE_MS);",
+  `    const sinceSpeech = Date.now() - speaking.endedAt;
+    cue.timeout = setTimeout(
+      playNext,
+      Math.max(THINKING_TONE_MIN_SILENCE_MS, THINKING_TONE_AFTER_SPEECH_MS - sinceSpeech),
+    );`,
+  "a longer wait right after the agent spoke",
+);
+
+await splice(
+  app("src/voice/voice-runtime.ts"),
+  `      if (eventType === "turn_started") {
+        state.turnInProgress = true;`,
+  `      // paseo-voice: no speak call outlives a turn boundary.
+      speaking.calls.clear();
+      if (eventType === "turn_started") {
+        speaking.endedAt = 0;
+        state.turnInProgress = true;`,
+  "a turn boundary clears speak calls",
+);
+
+await splice(
+  app("src/voice/voice-runtime.ts"),
+  `      stopCue();
+    },
+  };
+
+  return api;`,
+  `      stopCue();
+    },
+
+    onSpeakToolCall(serverId, agentId, callId, status) {
+      if (
+        !state.snapshot.isVoiceMode ||
+        state.snapshot.activeServerId !== serverId ||
+        state.snapshot.activeAgentId !== agentId
+      ) {
+        return;
+      }
+      if (status === "running") {
+        speaking.calls.add(callId);
+      } else if (speaking.calls.delete(callId) && speaking.calls.size === 0) {
+        speaking.endedAt = Date.now();
+      }
+      reconcileCue();
+    },
+  };
+
+  return api;`,
+  "the runtime hears about speak calls",
+);
+
+await splice(
+  app("src/contexts/session-context.tsx"),
+  `import { parseServerInfoStatusPayload } from "@getpaseo/protocol/messages";`,
+  `import { parseServerInfoStatusPayload } from "@getpaseo/protocol/messages";
+import { isSpeakToolName } from "@getpaseo/protocol/tool-name-normalization";`,
+  "the session context can recognise speak",
+);
+
+await splice(
+  app("src/contexts/session-context.tsx"),
+  `        voiceRuntime?.onTurnEvent(serverId, agentId, event.type);
+      }`,
+  `        voiceRuntime?.onTurnEvent(serverId, agentId, event.type);
+      }
+      // paseo-voice: a speak call in flight means the agent is talking, not thinking —
+      // the runtime holds the waiting music back for its whole length.
+      if (event.type === "timeline" && event.item.type === "tool_call" && isSpeakToolName(event.item.name)) {
+        voiceRuntime?.onSpeakToolCall(serverId, agentId, event.item.callId, event.item.status);
+      }`,
+  "speak calls reach the runtime",
 );
 
 // 3. The test that pins the old tone's length, which would now fail the build.

@@ -33,6 +33,14 @@ older daemon never sends, and closes itself after ten seconds. That reads as a p
 timeout and is not one. The script prints both versions after checking out, so a
 mismatch is visible before the build rather than after the install.
 
+A patch release whose protocol has not changed can be built ahead of the daemon by
+naming its tag — `./build.sh "" v0.11.2` against a 0.11.1 daemon, where the only
+change was in the app itself. Compare the two tags' `packages/protocol` and
+`packages/server` before relying on that.
+
+**Before a build, the end-to-end tests** run the same patched tree the build will
+compile — see [e2e.md](e2e.md#trying-a-fix-before-it-ships).
+
 ## The seven steps
 
 1. **Checks the machine** — Xcode, CocoaPods, git, and Node 22. Expo 54 fails on
@@ -58,6 +66,13 @@ mismatch is visible before the build rather than after the install.
 - **The gap between repeats**, 350 ms, set to zero — a gap reads as a stutter once the
   cue is music rather than a single ding.
 - **The silence before the first play**, 1500 ms, cut to 250 ms.
+- **The cue holds back while the agent speaks.** A spoken reply comes as separate
+  sentences, each sent once the phone confirms the one before, and the runtime saw only
+  the pauses — so the cue played between sentences, and again after the last one while
+  the model closed its turn. `speak` is a tool call whose `running` and `completed`
+  already reach the phone; the session context now passes them to the runtime, which
+  keeps the cue out while a call is in flight and for three seconds after the last one
+  ends. Music while the agent thinks, and only then — `e2e/` proves both halves.
 - **The test pinning the old tone's length** is skipped, or it fails the build.
 - **The bundle identifier** becomes `sh.paseo.debug.<team>`. Plain `sh.paseo.debug` is
   already registered to Paseo's own team and cannot be claimed.
