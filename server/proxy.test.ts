@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
-import { createServer, type Server } from "node:http";
+import { createServer, type Server, type ServerResponse } from "node:http";
 import { test } from "node:test";
 import type { Engine } from "./engine.server.ts";
+import { REPLY_FORMAT_HEADER } from "./patches.server.ts";
 import { createProxy } from "./proxy.server.ts";
 
 /** A stand-in engine process: whatever the handler writes is what the proxy reads. */
@@ -35,6 +36,7 @@ async function withProxy(
   work: (url: string, seen: Record<string, unknown>[], lines: string[]) => Promise<void>,
   rate = 1,
   steady = false,
+  encodeMp3?: (pcm: Buffer) => Promise<Buffer>,
 ): Promise<void> {
   const seen: Record<string, unknown>[] = [];
   const lines: string[] = [];
@@ -63,6 +65,7 @@ async function withProxy(
       pronunciations: [],
     }),
     log: (line) => lines.push(line),
+    encodeMp3,
   });
   // Port 0 means the OS picks; the proxy reports where it actually landed.
   await proxy.start();
@@ -102,6 +105,77 @@ test("a good render comes back whole, with a length", async () => {
       // 200 ms of speech plus a 10 ms cushion; the 80 ms of padding is gone.
       assert.equal(Math.round(audio.length / 2 / 24), 210);
     },
+  );
+});
+
+/** What the daemon sends once the patch asks for MP3: with the header that says it reads
+ *  the format from the reply, or without it, as a daemon not yet restarted does. */
+const speakMp3 = (url: string, readsFormat: boolean) =>
+  fetch(`${url}/v1/audio/speech`, {
+    method: "POST",
+    headers: { "content-type": "application/json", ...(readsFormat ? { [REPLY_FORMAT_HEADER]: "from-response" } : {}) },
+    body: JSON.stringify({ model: "tts-1", voice: "alloy", input: "Проверка связи.", response_format: "mp3" }),
+  });
+
+const speech = (_body: Record<string, unknown>, response: ServerResponse) => {
+  response.writeHead(200, { "content-type": "audio/pcm" });
+  response.end(pcm([...new Array(24 * 80).fill(0), ...new Array(24 * 200).fill(5000)]));
+};
+
+/** A Mac with neither `lame` nor `ffmpeg`. */
+const noEncoder = () => Promise.reject(new Error("для MP3 нужен lame или ffmpeg: brew install lame"));
+
+test("with nothing to make MP3 the local engine speaks PCM, to a daemon that reads the format", async () => {
+  await withProxy(
+    speech,
+    async (url, _seen, lines) => {
+      const reply = await speakMp3(url, true);
+      assert.equal(reply.status, 200);
+      assert.equal(reply.headers.get("content-type"), "audio/pcm");
+      const audio = Buffer.from(await reply.arrayBuffer());
+      const asked = Buffer.from(await (await speak(url)).arrayBuffer());
+      assert.deepEqual(audio, asked, "the very PCM a daemon asking for PCM gets");
+      assert.ok(
+        lines.some((line) => line.includes(" pcm, ") && line.includes("no MP3: для MP3 нужен lame")),
+        `why it is not MP3 has to be in the log, got: ${JSON.stringify(lines)}`,
+      );
+    },
+    1,
+    false,
+    noEncoder,
+  );
+});
+
+test("to a daemon that labels by what it asked for, it stays the error that says what to install", async () => {
+  // That daemon would tell the phone this PCM is MP3, and the phone would play nothing.
+  await withProxy(
+    speech,
+    async (url) => {
+      const reply = await speakMp3(url, false);
+      assert.equal(reply.status, 502);
+      assert.match(JSON.stringify(await reply.json()), /brew install lame/);
+    },
+    1,
+    false,
+    noEncoder,
+  );
+});
+
+test("with an encoder the local engine's sentence is MP3, whichever daemon asks", async () => {
+  const encoded = Buffer.from("what the encoder made of it");
+  await withProxy(
+    speech,
+    async (url) => {
+      for (const readsFormat of [true, false]) {
+        const reply = await speakMp3(url, readsFormat);
+        assert.equal(reply.status, 200);
+        assert.equal(reply.headers.get("content-type"), "audio/mpeg");
+        assert.deepEqual(Buffer.from(await reply.arrayBuffer()), encoded);
+      }
+    },
+    1,
+    false,
+    async () => encoded,
   );
 });
 

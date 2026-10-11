@@ -3,9 +3,13 @@ import type { Engine } from "./engine.server.ts";
 import { type Pronunciation, speak as speakWithGoogle, tierOf } from "./google.server.ts";
 import { render as renderCue } from "./cue.server.ts";
 import { encodeMp3, mp3Duration } from "./mp3.server.ts";
+import { REPLY_FORMAT_HEADER } from "./patches.server.ts";
 import { durationSeconds, lowPass, trimPadding } from "./pcm.server.ts";
 import { record } from "./usage.server.ts";
 import { STEADY_SEED } from "./state.server.ts";
+
+/** One sentence's audio as it goes back, and why it is PCM when MP3 was asked for. */
+type Made = { audio: Buffer; format: "pcm" | "mp3"; fallback?: string };
 
 export type Choice = {
   provider: "google" | "local";
@@ -35,6 +39,8 @@ export type ProxyOptions = {
   patience?: BindPatience;
   /** Where the dictation engine is listening, when this plugin runs one. */
   recogniser?: () => { port: number; running: boolean };
+  /** The local engine's PCM as MP3. Overridable so a test can have no encoder. */
+  encodeMp3?: (pcm: Buffer) => Promise<Buffer>;
 };
 
 export type Proxy = {
@@ -83,7 +89,7 @@ function readBody(request: import("node:http").IncomingMessage): Promise<string>
  * expects of `response_format: "pcm"`.
  */
 export function createProxy(options: ProxyOptions): Proxy {
-  const { port, engine, choice, log = () => {}, recogniser } = options;
+  const { port, engine, choice, log = () => {}, recogniser, encodeMp3: toMp3 = encodeMp3 } = options;
   const attempts = options.patience?.attempts ?? BIND_ATTEMPTS;
   const backoffMs = options.patience?.backoffMs ?? BIND_BACKOFF_MS;
   let server: Server | null = null;
@@ -161,12 +167,26 @@ export function createProxy(options: ProxyOptions): Proxy {
    * MP3, once this plugin's correction to the daemon asks for it. Google encodes it
    * itself; the local engine's PCM is encoded here. No low-pass: that was for the phone's
    * resampling of raw PCM, and the player that decodes MP3 resamples properly.
+   *
+   * With nothing to encode it — no `lame`, no `ffmpeg` — the local engine's sentence goes
+   * as the PCM it already is, if the daemon reads the format from the reply (`takesPcm`).
+   * One that labels it by what it asked for would have the clients play PCM as MP3, so
+   * there it stays the error that says what to install.
    */
-  async function mp3Of(text: string, at: Choice): Promise<Buffer> {
+  async function mp3Of(text: string, at: Choice, takesPcm: boolean): Promise<Made> {
     if (at.provider === "google") {
-      return render(text, at, "MP3");
+      return { audio: await render(text, at, "MP3"), format: "mp3" };
     }
-    return encodeMp3(trimPadding(await render(text, at)));
+    const pcm = trimPadding(await render(text, at));
+    try {
+      return { audio: await toMp3(pcm), format: "mp3" };
+    } catch (failure) {
+      if (!takesPcm) {
+        throw failure;
+      }
+      const why = failure instanceof Error ? failure.message : String(failure);
+      return { audio: at.phoneSafe ? lowPass(pcm) : pcm, format: "pcm", fallback: why };
+    }
   }
 
   /**
@@ -240,13 +260,13 @@ export function createProxy(options: ProxyOptions): Proxy {
     response: import("node:http").ServerResponse,
   ) {
     let input = "";
-    let format: "pcm" | "mp3" = "pcm";
+    let asked: "pcm" | "mp3" = "pcm";
     try {
       const body = JSON.parse(await readBody(request)) as { input?: string; text?: string; response_format?: string };
       input = (body.input ?? body.text ?? "").trim();
       // Upstream asks for `pcm`; the daemon asks for `mp3` once this plugin's correction
       // to its speech config is in. Anything else gets what upstream would have.
-      format = body.response_format === "mp3" ? "mp3" : "pcm";
+      asked = body.response_format === "mp3" ? "mp3" : "pcm";
     } catch {
       refuse(response, 400, "body is not JSON");
       return;
@@ -276,15 +296,19 @@ export function createProxy(options: ProxyOptions): Proxy {
      * sentence before playing it anyway.
      */
     const started = Date.now();
-    let audio: Buffer;
+    // Said by this plugin's correction to the daemon's speech client: the format of each
+    // sentence is read from the reply, so PCM can be sent where MP3 cannot be made.
+    const takesPcm = request.headers[REPLY_FORMAT_HEADER] === "from-response";
+    let made: Made;
     try {
-      audio = format === "mp3" ? await mp3Of(input, at) : await pcmOf(input, at);
+      made = asked === "mp3" ? await mp3Of(input, at, takesPcm) : { audio: await pcmOf(input, at), format: "pcm" };
     } catch (failure) {
       const message = failure instanceof Error ? failure.message : String(failure);
       log(`voice: ${at.provider}: ${input.length} chars failed after ${Date.now() - started}ms: ${message}`);
       refuse(response, 502, message);
       return;
     }
+    const { audio, format } = made;
     if (audio.length === 0) {
       log(`voice: ${at.provider} returned no audio for ${input.length} chars`);
       refuse(response, 502, "синтез вернул пустой звук");
@@ -310,7 +334,8 @@ export function createProxy(options: ProxyOptions): Proxy {
     // whether the audio was ever produced or only ever lost.
     const seconds = format === "mp3" ? mp3Duration(audio) : durationSeconds(audio);
     log(
-      `voice: ${at.provider} spoke ${input.length} chars → ${seconds.toFixed(2)}s ${format}, ${Math.round(audio.length / 1024)} KB in ${Date.now() - started}ms`,
+      `voice: ${at.provider} spoke ${input.length} chars → ${seconds.toFixed(2)}s ${format}, ${Math.round(audio.length / 1024)} KB in ${Date.now() - started}ms` +
+        (made.fallback ? ` (no MP3: ${made.fallback})` : ""),
     );
   }
 

@@ -10,8 +10,8 @@ import type { NativeAudio } from "./native-audio.ts";
 
 const PROXY = process.env.PASEO_VOICE_PROXY || "http://127.0.0.1:8123";
 
-/** PCM16 mono at 16 kHz, the rate the phone captures at. */
-export async function synthesize(text: string): Promise<Buffer> {
+/** PCM16 mono at 24 kHz, as the proxy gives it to Paseo. */
+export async function proxyPcm(text: string): Promise<Buffer> {
   const response = await fetch(`${PROXY}/v1/audio/speech`, {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -21,7 +21,12 @@ export async function synthesize(text: string): Promise<Buffer> {
   if (!response.ok) {
     throw new Error(`the plugin's proxy would not speak: ${response.status} ${await response.text()}`);
   }
-  return resample(Buffer.from(await response.arrayBuffer()), 24_000, 16_000);
+  return Buffer.from(await response.arrayBuffer());
+}
+
+/** PCM16 mono at 16 kHz, the rate the phone captures at. */
+export async function synthesize(text: string): Promise<Buffer> {
+  return resample(await proxyPcm(text), 24_000, 16_000);
 }
 
 /** Linear interpolation; plenty for speech that only has to be recognised. */

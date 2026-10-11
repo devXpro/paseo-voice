@@ -15,7 +15,7 @@ things in Paseo that no setting reaches.
 [![Release](https://img.shields.io/github/v/release/devXpro/paseo-voice?style=flat-square&color=111111&labelColor=111111&label=release)](https://github.com/devXpro/paseo-voice/releases)
 [![Paseo](https://img.shields.io/badge/Paseo-%E2%89%A5%200.10-111111?style=flat-square&labelColor=111111)](https://paseo.sh)
 [![Licence](https://img.shields.io/github/license/devXpro/paseo-voice?style=flat-square&color=111111&labelColor=111111&label=licence)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-117%20passing-111111?style=flat-square&labelColor=111111)](docs/development.md)
+[![Tests](https://img.shields.io/badge/tests-122%20passing-111111?style=flat-square&labelColor=111111)](docs/development.md)
 
 🇷🇺 **Real Russian voices** · 🎶 **Music instead of the beep** · 📊 **Spend metered live** · 🩹 **Six bugs fixed in Paseo itself** · 📶 **Voice in a sixth of the traffic, both ways**
 

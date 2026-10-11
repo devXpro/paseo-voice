@@ -1,10 +1,14 @@
 import assert from "node:assert/strict";
+import { createServer, type Server } from "node:http";
+import type { AddressInfo } from "node:net";
 import { after, before, describe, test } from "node:test";
 import { setTimeout as sleep } from "node:timers/promises";
+import { createProxy, type Proxy as SpeechProxy } from "../../server/proxy.server.ts";
 import { openDictation } from "../harness/dictation.ts";
 import { openLiveSession, type VoiceCodecChoice } from "../harness/live-daemon.ts";
 import { startTestDaemon, type TestDaemon } from "../harness/test-daemon.ts";
 import { createTimeline, type Heard, type Timeline } from "../harness/timeline.ts";
+import { proxyPcm } from "../harness/tts.ts";
 
 /**
  * Audio both ways, the way a phone sends and gets it — to and from a daemon of the tests'
@@ -135,6 +139,106 @@ describe("the agent's voice, through the relay", { timeout: 600_000 }, () => {
     console.log(
       `delivery of the first sentence: MP3 ${Math.round(mp3.deliveryMs)} ms for ${Math.round(mp3.speechMs)} ms of speech, ` +
         `PCM ${Math.round(pcm.deliveryMs)} ms for ${Math.round(pcm.speechMs)} ms of speech`,
+    );
+  });
+});
+
+/**
+ * The local engine on a Mac with nothing to make MP3 with: no `lame`, no `ffmpeg`. The
+ * daemon asks for MP3, and this plugin's proxy — its own code, started here with no
+ * encoder — can answer only with the engine's PCM. The engine is the one thing stood in
+ * for: it answers with this plugin's voice, fetched as PCM from the proxy on the real
+ * daemon, so that a test of the format does not wait for a model to load.
+ */
+describe("the local engine's voice with nothing to make MP3 with", { timeout: 300_000 }, () => {
+  const lines: string[] = [];
+  const timeline = createTimeline();
+  let engine: Server;
+  let proxy: SpeechProxy;
+  let daemon: TestDaemon;
+  let ended = "";
+  let formats: string[] = [];
+  let unconfirmed: string[] = [];
+  before(async () => {
+    engine = createServer((request, response) => {
+      const chunks: Buffer[] = [];
+      request.on("data", (chunk: Buffer) => chunks.push(chunk));
+      request.on("end", () => {
+        const { text } = JSON.parse(Buffer.concat(chunks).toString("utf8")) as { text: string };
+        proxyPcm(text).then(
+          (pcm) => {
+            response.writeHead(200, { "content-type": "audio/pcm" });
+            response.end(pcm);
+          },
+          (failure: unknown) => {
+            response.writeHead(502);
+            response.end(String(failure));
+          },
+        );
+      });
+    });
+    await new Promise<void>((resolve) => engine.listen(0, "127.0.0.1", resolve));
+    proxy = createProxy({
+      port: 0,
+      engine: {
+        ensure: async () => {},
+        stop: () => {},
+        running: () => true,
+        model: () => "stand-in",
+        lastError: () => "",
+        touch: () => {},
+        port: (engine.address() as AddressInfo).port,
+      },
+      choice: () => ({
+        provider: "local",
+        voice: "stand-in",
+        model: "stand-in",
+        language: "russian",
+        rate: 1,
+        steady: false,
+        cue: "",
+        cueVolume: 1,
+        phoneSafe: false,
+        googleKey: "",
+        pronunciations: [],
+      }),
+      log: (line) => lines.push(line),
+      encodeMp3: () => Promise.reject(new Error("для MP3 нужен lame или ffmpeg: brew install lame")),
+    });
+    await proxy.start();
+    daemon = await startTestDaemon({ speechUrl: `http://127.0.0.1:${proxy.port}/v1` });
+    const session = await openLiveSession({ timeline, daemon });
+    try {
+      await session.type("Скажи голосом двумя короткими предложениями, зачем нужен голосовой режим.");
+      ended = await session.turnEnd(120_000);
+      await sleep(4000);
+      formats = [...session.traffic.down.formats];
+      unconfirmed = session.audioIds.filter((id) => !session.confirmed.has(id));
+    } finally {
+      await session.close();
+    }
+  });
+  after(async () => {
+    await daemon?.stop();
+    await proxy?.stop();
+    engine?.close();
+    console.log(`\n--- the local engine with no MP3 encoder ---\n${lines.join("\n")}\n${timeline.render()}\n`);
+  });
+
+  test("the daemon asks for MP3, gets PCM, and tells the phone it is PCM", () => {
+    assert.ok(
+      lines.some((line) => line.includes(" pcm, ") && line.includes("no MP3")),
+      `the proxy never answered with PCM: did the daemon say it reads the format?\n${lines.join("\n")}`,
+    );
+    assert.deepEqual(formats, ["pcm"], timeline.render());
+  });
+
+  test("and the phone plays it to the end and confirms it, and the turn completes", () => {
+    assert.equal(ended, "turn_completed", timeline.render());
+    assert.deepEqual(unconfirmed, [], timeline.render());
+    assert.ok(
+      timeline.heard.some((one) => one.label === "speech" && one.to > one.from),
+      `nothing was heard\n${timeline.render()}`,
     );
   });
 });

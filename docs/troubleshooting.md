@@ -91,9 +91,11 @@ far, the phone build's alone. See [ios.md](ios.md#the-corrections-it-applies).
 ## On the local engine every sentence fails with «для MP3 нужен lame или ffmpeg»
 
 With the patch in place the daemon asks for the agent's voice as MP3. Google encodes it
-itself; the local engine's audio is encoded on this Mac, by `lame` or `ffmpeg`, and with
-neither installed nothing can be spoken. `brew install lame` and it speaks again, no
-restart needed. A built-in encoder that needs neither is coming in the next release.
+itself; the local engine's audio is encoded on this Mac, by `lame` or `ffmpeg`. With
+neither, the local engine's sentences go as PCM instead — but only from a daemon started
+after the correction **Локальный движок без MP3** was written: restart Paseo. Until then
+nothing can be spoken; 0.8.0 had no way round it at all. `brew install lame` makes the
+voice MP3, with no restart. See [patches.md](patches.md#локальный-движок-без-mp3).
 
 ## Every sentence sounds like a different person
 

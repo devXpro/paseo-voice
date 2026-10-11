@@ -5,8 +5,18 @@ import { mkdtemp, readFile, rm, utimes, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
+import { pathToFileURL } from "node:url";
 import { type Archive, locate, readArchive, readEntry } from "./asar.server.ts";
-import { asarIntegrityOn, fingerprintOf, fit, judge, MARKER, patchSource, TARGETS } from "./patches.server.ts";
+import {
+  asarIntegrityOn,
+  fingerprintOf,
+  fit,
+  judge,
+  MARKER,
+  patchSource,
+  REPLY_FORMAT_HEADER,
+  TARGETS,
+} from "./patches.server.ts";
 
 /** The shape of the two functions this corrects, as Paseo 0.10.2 compiles them. */
 const splicesOf = (id: string) => TARGETS.find((target) => target.id === id)!.splices;
@@ -352,6 +362,67 @@ test("dictation decodes Opus the same way, once per chunk, before the stream see
   assert.ok(text.includes("!state.receivedChunks.has(params.seq)"), "and a chunk that arrives twice is decoded once");
   assert.ok(text.includes("params = { ...params, audioBase64, format: state.inputFormat };"), "then it is the stream's own PCM");
   assert.ok(text.includes("codec.freeOpus(state)"), "and the decoder goes with the stream");
+});
+
+/** The daemon's speech client, cut down to the lines the reply correction is anchored on. */
+const SPEECH_CLIENT = `export class OpenAITTS {
+    constructor(openaiClient) {
+        this.config = { model: "tts-1", voice: "alloy", responseFormat: "mp3" };
+        this.openaiClient = openaiClient;
+    }
+    async synthesizeSpeech(text) {
+        try {
+            const response = await this.openaiClient.audio.speech.create({
+                model: this.config.model,
+                voice: this.config.voice,
+                input: text,
+                response_format: this.config.responseFormat,
+            });
+            const audioStream = response.body;
+            return {
+                stream: audioStream,
+                format: this.config.responseFormat || "mp3",
+            };
+        }
+        catch (error) {
+            throw error;
+        }
+    }
+}
+`;
+
+type Asked = { body: Record<string, unknown>; options?: { headers?: Record<string, string> } };
+type SpeechClient = new (client: unknown) => { synthesizeSpeech(text: string): Promise<{ format: string }> };
+
+test("a sentence is labelled by what came back, and the daemon tells the proxy so", async () => {
+  const outcome = patchSource(SPEECH_CLIENT, splicesOf("reply"));
+  assert.equal(outcome.ok, true);
+  const dir = await mkdtemp(path.join(tmpdir(), "voice-reply-"));
+  try {
+    const file = path.join(dir, "tts.mjs");
+    await writeFile(file, outcome.ok ? outcome.text : "");
+    const { OpenAITTS } = (await import(pathToFileURL(file).href)) as { OpenAITTS: SpeechClient };
+    const asked: Asked[] = [];
+    // The OpenAI SDK hands back the fetch response itself for audio.
+    const answering = (contentType: string) =>
+      new OpenAITTS({
+        audio: {
+          speech: {
+            create: async (body: Asked["body"], options?: Asked["options"]) => {
+              asked.push({ body, options });
+              return { body: "audio", headers: new Headers({ "content-type": contentType }) };
+            },
+          },
+        },
+      });
+    assert.equal((await answering("audio/pcm").synthesizeSpeech("Привет.")).format, "pcm", "PCM from the proxy goes as PCM");
+    assert.equal((await answering("audio/mpeg").synthesizeSpeech("Привет.")).format, "mp3", "and MP3 as MP3");
+    assert.equal(asked[0]?.options?.headers?.[REPLY_FORMAT_HEADER], "from-response");
+    // A real OpenAI endpoint refuses parameters it does not know, so the body stays upstream's.
+    assert.deepEqual(Object.keys(asked[0]?.body ?? {}), ["model", "voice", "input", "response_format"]);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 });
 
 /** The source Paseo plays the cue from, as Metro minifies it. */

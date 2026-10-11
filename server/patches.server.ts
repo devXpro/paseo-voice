@@ -305,6 +305,34 @@ const formatSplices: readonly Splice[] = [
   },
 ];
 
+/** The request header that says the daemon reads each sentence's format from the reply. */
+export const REPLY_FORMAT_HEADER = "x-paseo-voice-format";
+
+/**
+ * Each sentence labelled by what came back, not by what was asked for.
+ *
+ * The daemon tells its clients a sentence's format from its own config, so with MP3 asked
+ * for, everything is labelled MP3. The local engine's audio is encoded to MP3 on this Mac,
+ * by `lame` or `ffmpeg`; with neither, the proxy had nothing to answer with but an error,
+ * and the sentence was silent. Labelled by the reply's `content-type`, it can go as the
+ * PCM it already is. The header tells the proxy that this daemon reads it.
+ */
+const replySplices: readonly Splice[] = [
+  {
+    find: `                response_format: this.config.responseFormat,
+            });`,
+    replace: `                response_format: this.config.responseFormat,
+            }, {
+                // paseo-voice: the format is read from the reply, so the proxy may send PCM.
+                headers: { "${REPLY_FORMAT_HEADER}": "from-response" },
+            });`,
+  },
+  {
+    find: `                format: this.config.responseFormat || "mp3",`,
+    replace: `                format: response.headers.get("content-type") === "audio/pcm" ? "pcm" : this.config.responseFormat || "mp3",`,
+  },
+];
+
 /**
  * Speech that cuts into the agent aborts whatever is playing, and the abort is lifted only
  * when a transcript with words in it arrives. A turn that ends empty — a cough, a noise the
@@ -500,6 +528,16 @@ export const TARGETS: readonly Target[] = [
     splices: formatSplices,
     // Paseo 0.11.2.
     verified: ["f936779bd4067b351eaaf127f098f9e7ece5458e50644e124ea8a4e0f2e09275"],
+  },
+  {
+    id: "reply",
+    title: "Локальный движок без MP3",
+    note: "Если на маке нечем сделать MP3, голос локального движка идёт несжатым, а не пропадает",
+    kind: "asar",
+    entry: "node_modules/@getpaseo/server/dist/server/server/speech/providers/openai/tts.js",
+    splices: replySplices,
+    // Paseo 0.11.2.
+    verified: ["70f894216b059c0c8f3a274b6038b14fc6242205cb777603d8160389301f6228"],
   },
   {
     // One file, so one correction, as above.

@@ -202,7 +202,9 @@ agent's voice still comes from this plugin's proxy, on the real daemon.
 relay under its own server id — its home has its own keys — and the harness then reaches
 it the phone's way, end-to-end encrypted, which is what a test about the link needs.
 `startTestDaemon({ env })` adds to its environment; `PASEO_VOICE_TTS_FORMAT=pcm` gives
-it upstream's uncompressed voice to compare with.
+it upstream's uncompressed voice to compare with. `startTestDaemon({ speechUrl })` sends
+its speech client somewhere other than this plugin's proxy on the real daemon — to a proxy
+the test starts itself, say, with settings the real one does not have.
 
 Being started from the app, it runs **whatever corrections are in the archive right
 now**: write a correction, and the next test daemon has it while the real daemon goes on
@@ -230,6 +232,12 @@ sentence still plays to the end and is confirmed, that nothing sounds after the 
 and that what was said is recognised word for word either way. How long the first
 sentence took on the link is printed, not asserted: part of it is the relay's own round
 trips, and a model never gives the same answer twice to compare it on.
+
+The same file has the local engine on a Mac with nothing to make MP3 with: this plugin's
+proxy, its own code, started in the test with no encoder, in front of a test daemon that
+asks for MP3. The engine is the only stand-in — it answers with this plugin's voice as
+PCM — and the test states that the PCM reaches the phone labelled as PCM and plays to the
+end, which takes the correction **Локальный движок без MP3** in the daemon.
 
 `PASEO_VOICE_E2E_CODEC` sets how the phone sends its microphone for a whole run —
 `opus`, `pcm`, or `plugin` to ask this plugin as the phone does — so the older suites

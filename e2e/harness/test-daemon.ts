@@ -42,14 +42,17 @@ export type TestDaemon = Awaited<ReturnType<typeof startTestDaemon>>;
  */
 type RelaySettings = { endpoint?: string; useTls?: boolean; publicEndpoint?: string; publicUseTls?: boolean };
 
-async function writeConfig(relay: boolean): Promise<RelaySettings> {
+async function writeConfig(relay: boolean, speechUrl?: string): Promise<RelaySettings> {
   const main = JSON.parse(await readFile(path.join(MAIN_HOME, "config.json"), "utf8")) as {
     version?: unknown;
     daemon?: { mcp?: unknown; appendSystemPrompt?: unknown; relay?: RelaySettings };
-    providers?: unknown;
+    providers?: { openai?: { tts?: { baseUrl?: string } } };
     agents?: unknown;
     features?: Record<string, unknown>;
   };
+  if (speechUrl && main.providers?.openai?.tts) {
+    main.providers.openai.tts.baseUrl = speechUrl;
+  }
   const config = {
     version: main.version,
     daemon: {
@@ -114,9 +117,11 @@ export async function startTestDaemon(options: {
   relay?: boolean;
   /** Added to the daemon's environment — `PASEO_VOICE_TTS_FORMAT`, say. */
   env?: Record<string, string>;
+  /** Where it asks for the agent's voice instead of this plugin's proxy on the real daemon. */
+  speechUrl?: string;
 } = {}) {
   await stopAny();
-  const relay = await writeConfig(options.relay === true);
+  const relay = await writeConfig(options.relay === true, options.speechUrl);
   // A log per start, so a test reads only what this daemon did.
   await rm(path.join(TEST_HOME, "daemon.log"), { force: true });
   const output = await open(path.join(TEST_HOME, "run.out"), "w");

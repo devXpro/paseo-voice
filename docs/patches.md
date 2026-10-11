@@ -166,14 +166,34 @@ through its file player, the desktop through Web Audio — but the daemon's conf
 `pcm` and nothing else. The correction asks for `mp3`, and this plugin's proxy answers:
 Google encodes MP3 itself, at 64 kbit/s — a sixth of the PCM, with no setting for
 less — and the local engine's PCM is encoded by `lame`, or `ffmpeg`, whichever is there.
-With neither, the local engine cannot speak while the patch is in place: `brew install
-lame`.
+With neither, it goes as PCM: see [below](#локальный-движок-без-mp3).
 Google returns MP3 no slower than PCM: 358 ms against 439 for 117 characters, 694
 against 722 for 235.
 
 The loss is audible only up close: on the phone's speaker nothing, in good headphones a
 slight smear on sibilants. `PASEO_VOICE_TTS_FORMAT=pcm` in the daemon's environment
 brings PCM back, which is how the tests compare the two.
+
+## Локальный движок без MP3
+
+`@getpaseo/server/.../speech/providers/openai/tts.js`
+
+The daemon tells its clients each sentence's format from its own config, not from what
+came back — so once it asks for MP3, everything is labelled MP3. The local engine's audio
+is made into MP3 on this Mac, and on a Mac with neither `lame` nor `ffmpeg` the proxy had
+nothing to answer with but an error: every sentence of the local engine was silent. 0.8.0
+shipped with that.
+
+Now each sentence is labelled by the reply's `content-type`, and the daemon says so in a
+request header, `x-paseo-voice-format: from-response`. A proxy that sees it answers the
+local engine's sentence as the PCM it already is, uncompressed as before 0.8.0, rather
+than not at all; one that does not — a daemon not yet restarted onto the correction —
+still gets the error, since it would tell the phone the PCM was MP3, and the phone would
+play nothing. Google is untouched: it makes the MP3 itself, and the label stays `mp3`.
+`brew install lame` makes the local engine's voice MP3 too.
+
+The header is the only thing added to the request. A real OpenAI endpoint ignores headers
+it does not know, and would refuse a body parameter it does not know.
 
 ## Голос с телефона в Opus
 
