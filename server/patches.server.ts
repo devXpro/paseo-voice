@@ -5,6 +5,7 @@ import path from "node:path";
 import vm from "node:vm";
 import { type Archive, type Entry, locate, readArchive, readEntry, statOnDisk, writeEntry } from "./asar.server.ts";
 import { paths } from "./paths.server.ts";
+import { msg } from "../shared/i18n/index.ts";
 
 /**
  * Two corrections to Paseo's own speech manager, written into its archive.
@@ -500,8 +501,8 @@ const cueSplices: readonly Splice[] = [
 export const TARGETS: readonly Target[] = [
   {
     id: "drain",
-    title: "Читать звук сразу",
-    note: "Убирает пропажу предложений посреди ответа",
+    title: msg("patch.drain.title"),
+    note: msg("patch.drain.note"),
     kind: "asar",
     entry: "node_modules/@getpaseo/server/dist/server/server/agent/tts-manager.js",
     splices: ttsSplices,
@@ -511,8 +512,8 @@ export const TARGETS: readonly Target[] = [
   {
     // One file, so one correction: the archive keeps one original per file.
     id: "listen",
-    title: "Голосовой ввод",
-    note: "Мьют отправляет фразу, распознавание не копит тишину между фразами, детектор речи поднимается после падения",
+    title: msg("patch.listen.title"),
+    note: msg("patch.listen.note"),
     kind: "asar",
     entry: "node_modules/@getpaseo/server/dist/server/server/session/voice/voice-turn-controller.js",
     splices: [...muteSplices, ...prerollSplices, ...detectorSplices],
@@ -521,8 +522,8 @@ export const TARGETS: readonly Target[] = [
   },
   {
     id: "format",
-    title: "Голос агента в MP3",
-    note: "Голос агента идёт на телефон в MP3, в шесть раз легче: первое слово звучит раньше",
+    title: msg("patch.format.title"),
+    note: msg("patch.format.note"),
     kind: "asar",
     entry: "node_modules/@getpaseo/server/dist/server/server/speech/providers/openai/config.js",
     splices: formatSplices,
@@ -531,8 +532,8 @@ export const TARGETS: readonly Target[] = [
   },
   {
     id: "reply",
-    title: "Локальный движок без MP3",
-    note: "Если на маке нечем сделать MP3, голос локального движка идёт несжатым, а не пропадает",
+    title: msg("patch.reply.title"),
+    note: msg("patch.reply.note"),
     kind: "asar",
     entry: "node_modules/@getpaseo/server/dist/server/server/speech/providers/openai/tts.js",
     splices: replySplices,
@@ -542,8 +543,8 @@ export const TARGETS: readonly Target[] = [
   {
     // One file, so one correction, as above.
     id: "session",
-    title: "Голосовая сессия",
-    note: "Ответы агента снова звучат после нераспознанной фразы; голос с телефона принимается сжатым, в Opus",
+    title: msg("patch.session.title"),
+    note: msg("patch.session.note"),
     kind: "asar",
     entry: "node_modules/@getpaseo/server/dist/server/server/session/voice/voice-session.js",
     splices: [...abortSplices, ...voiceOpusSplices],
@@ -552,8 +553,8 @@ export const TARGETS: readonly Target[] = [
   },
   {
     id: "dictation",
-    title: "Диктовка в Opus",
-    note: "Голос с телефона при диктовке принимается сжатым, в Opus",
+    title: msg("patch.dictation.title"),
+    note: msg("patch.dictation.note"),
     kind: "asar",
     entry: "node_modules/@getpaseo/server/dist/server/server/dictation/dictation-stream-manager.js",
     splices: dictationOpusSplices,
@@ -562,8 +563,8 @@ export const TARGETS: readonly Target[] = [
   },
   {
     id: "cue",
-    title: "Своя музыка ожидания",
-    note: "Ставит в десктопный Paseo звук, выбранный в разделе «Звук ожидания»",
+    title: msg("patch.cue.title"),
+    note: msg("patch.cue.note"),
     kind: "file",
     entry: "app-dist/_expo/static/js/web/index-*.js",
     splices: cueSplices,
@@ -683,7 +684,7 @@ export function judge(
     return judgeClean(target, source, auto);
   }
   if (original === undefined) {
-    return { kind: "refused", why: "правка уже наложена, а оригинала рядом нет — не проверить, та ли это версия" };
+    return { kind: "refused", why: msg("patch.alreadyNoOriginal") };
   }
   if (made(target, original, source.size) === source.text) {
     return { kind: "in-place" };
@@ -705,19 +706,17 @@ function judgeClean(target: Target, source: { text: string; size: number }, auto
     return {
       kind: "refused",
       why:
-        outcome.reason === "already-patched"
-          ? "сохранённый оригинал сам с правкой — переустанови Paseo"
-          : "незнакомая версия Paseo — якоря не совпали",
+        outcome.reason === "already-patched" ? msg("patch.originalPatched") : msg("patch.unknownVersion"),
     };
   }
   if (target.kind === "file") {
     return parses(outcome.text)
       ? { kind: "write", text: outcome.text, original: source.text }
-      : { kind: "refused", why: "после правки бандл не разбирается — с ним Paseo не запустится" };
+      : { kind: "refused", why: msg("patch.bundleBroken") };
   }
   const fitted = fit(outcome.text, source.size);
   return fitted === null
-    ? { kind: "refused", why: "правка не влезает в исходный размер" }
+    ? { kind: "refused", why: msg("patch.tooBig") }
     : { kind: "write", text: fitted, original: source.text };
 }
 
@@ -776,7 +775,7 @@ async function asarIntegrityEnforced(archivePath: string): Promise<boolean> {
   } finally {
     await handle.close();
   }
-  throw new Error("не нашёл предохранители Electron — не могу проверить, что Paseo разрешает правки в app.asar");
+  throw new Error(msg("patch.noFuses"));
 }
 
 export type TargetState = {
@@ -952,7 +951,7 @@ async function writeAuto(next: Partial<AutoState>): Promise<void> {
 /** Writes one correction a verdict allowed, keeping the original it replaces. */
 async function write(archive: Archive, target: Target, original: string, text: string): Promise<void> {
   if (target.kind === "asar" && (await asarIntegrityEnforced(archive.path))) {
-    throw new Error("Paseo включил проверку целостности app.asar — с правкой внутри он не запустится");
+    throw new Error(msg("patch.integrityOn"));
   }
 
   // Rewritten before every write rather than kept from the first: this only ever runs
@@ -1064,7 +1063,7 @@ export async function inspect(): Promise<PatchState> {
   try {
     const archive = await located();
     if (!archive) {
-      return { ...blank, error: "не нашёл app.asar — Paseo стоит не там, где ожидалось" };
+      return { ...blank, error: msg("patch.asarMissing") };
     }
     const targets: TargetState[] = [];
     for (const target of TARGETS) {
@@ -1119,12 +1118,12 @@ export async function inspect(): Promise<PatchState> {
 export async function apply(): Promise<void> {
   const archive = await located();
   if (!archive) {
-    throw new Error("не нашёл app.asar");
+    throw new Error(msg("patch.asarNotFound"));
   }
   for (const target of TARGETS) {
     const source = await textOf(archive, target);
     if (!source) {
-      throw new Error(`${target.title}: файл не найден — Paseo обновился`);
+      throw new Error(msg("patch.fileGone", { title: target.title }));
     }
     const verdict = judge(target, source, false, await originalOf(target, source));
     if (verdict.kind === "refused") {
@@ -1144,7 +1143,7 @@ export async function apply(): Promise<void> {
 export async function revert(): Promise<void> {
   const archive = await located();
   if (!archive) {
-    throw new Error("не нашёл app.asar");
+    throw new Error(msg("patch.asarNotFound"));
   }
   for (const target of TARGETS) {
     let original: string;
@@ -1169,7 +1168,7 @@ export async function revert(): Promise<void> {
       continue;
     }
     if (Buffer.byteLength(original) !== entry.size) {
-      throw new Error(`${target.title}: сохранённый оригинал другого размера — Paseo обновился`);
+      throw new Error(msg("patch.originalSize", { title: target.title }));
     }
     await writeEntry(archive.path, entry, Buffer.from(original, "utf8"));
   }
@@ -1212,13 +1211,13 @@ export async function autoApply(): Promise<AutoReport | null> {
   if (!archive) {
     // No archive carrying the corrected files is the loudest change there is — the code
     // moved — so it is reported like the rest rather than thrown into a log.
-    const text = "не нашёл app.asar с файлами, которые правятся — Paseo переложил код или стоит не там";
+    const text = msg("patch.archive.missing");
     return settled(state, {
       version: "?",
       written: [],
       archived: false,
       restart: false,
-      alerts: [{ id: "archive", title: "Архив Paseo", text }],
+      alerts: [{ id: "archive", title: msg("patch.archive.title"), text }],
       fresh: false,
     });
   }
@@ -1233,7 +1232,7 @@ export async function autoApply(): Promise<AutoReport | null> {
     try {
       const source = await textOf(archive, target);
       if (!source) {
-        alert(`в Paseo ${version} нет файла, в который она ложится`);
+        alert(msg("patch.noFile", { version }));
         continue;
       }
       const original = await originalOf(target, source);
@@ -1250,8 +1249,8 @@ export async function autoApply(): Promise<AutoReport | null> {
         const diff = `diff -u ${shown(await backupOf(target))} ${shown(pending)}`;
         alert(
           verdict.anchorsFit
-            ? `Paseo ${version} изменил файл, якоря совпадают. Проверь: ${diff} — если правка по-прежнему верна, добавь в verified ${verdict.sha}`
-            : `Paseo ${version} изменил файл, якоря не совпадают — правку надо переписать. Что поменялось: ${diff}`,
+            ? msg("patch.unverifiedFits", { version, diff, sha: verdict.sha })
+            : msg("patch.unverifiedRewrite", { version, diff }),
         );
       }
     } catch (failure) {

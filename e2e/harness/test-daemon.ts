@@ -42,23 +42,31 @@ export type TestDaemon = Awaited<ReturnType<typeof startTestDaemon>>;
  */
 type RelaySettings = { endpoint?: string; useTls?: boolean; publicEndpoint?: string; publicUseTls?: boolean };
 
-async function writeConfig(relay: boolean, speechUrl?: string): Promise<RelaySettings> {
+async function writeConfig(
+  relay: boolean,
+  speechUrl?: string,
+  dictationUrl?: string,
+  prompt?: string,
+): Promise<RelaySettings> {
   const main = JSON.parse(await readFile(path.join(MAIN_HOME, "config.json"), "utf8")) as {
     version?: unknown;
     daemon?: { mcp?: unknown; appendSystemPrompt?: unknown; relay?: RelaySettings };
-    providers?: { openai?: { tts?: { baseUrl?: string } } };
+    providers?: { openai?: { tts?: { baseUrl?: string }; stt?: { baseUrl?: string } } };
     agents?: unknown;
     features?: Record<string, unknown>;
   };
   if (speechUrl && main.providers?.openai?.tts) {
     main.providers.openai.tts.baseUrl = speechUrl;
   }
+  if (dictationUrl && main.providers?.openai?.stt) {
+    main.providers.openai.stt.baseUrl = dictationUrl;
+  }
   const config = {
     version: main.version,
     daemon: {
       listen: LISTEN,
       mcp: main.daemon?.mcp,
-      appendSystemPrompt: main.daemon?.appendSystemPrompt,
+      appendSystemPrompt: prompt ?? main.daemon?.appendSystemPrompt,
       relay: relay ? { ...main.daemon?.relay, enabled: true } : { enabled: false },
     },
     providers: main.providers,
@@ -119,15 +127,29 @@ export async function startTestDaemon(options: {
   env?: Record<string, string>;
   /** Where it asks for the agent's voice instead of this plugin's proxy on the real daemon. */
   speechUrl?: string;
+  /** Where dictation goes instead — a proxy of the test's own, with its own language. */
+  dictationUrl?: string;
+  /** The prompt appended to every agent, instead of the one the real daemon has. */
+  prompt?: string;
 } = {}) {
   await stopAny();
-  const relay = await writeConfig(options.relay === true, options.speechUrl);
+  const relay = await writeConfig(options.relay === true, options.speechUrl, options.dictationUrl, options.prompt);
   // A log per start, so a test reads only what this daemon did.
   await rm(path.join(TEST_HOME, "daemon.log"), { force: true });
   const output = await open(path.join(TEST_HOME, "run.out"), "w");
+  // A test agent with nobody's instructions. Without the Claude profile of whoever runs
+  // the suite — the real daemon, started by the app, has none, and the agent's directory
+  // picks one — and without any CLAUDE.md: Claude Code reads one from every directory
+  // above the agent's, `~/.claude/CLAUDE.md` included whatever the profile, and one that
+  // said "answer in Russian" answered a Spanish question in Russian.
+  const { CLAUDE_CONFIG_DIR: _, ...inherited } = process.env;
   const child: ChildProcess = spawn(CLI, ["daemon", "run", "--home", TEST_HOME], {
+    // From its own home rather than the repository: whatever a shell started from the
+    // daemon's directory makes of it — a per-directory Claude profile, say — must not
+    // land in the checkout.
+    cwd: TEST_HOME,
     stdio: ["ignore", output.fd, output.fd],
-    env: { ...process.env, ...options.env },
+    env: { ...inherited, CLAUDE_CODE_DISABLE_CLAUDE_MDS: "1", ...options.env },
   });
   let exited = false;
   child.once("exit", () => {

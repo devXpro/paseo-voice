@@ -1,7 +1,7 @@
 {
   "name": "paseo-voice",
   "version": "0.8.1",
-  "description": "Russian speech for Paseo voice mode: Google Cloud TTS, music instead of the waiting beep, and fixes for the sentences Paseo drops.",
+  "description": "Natural voices for Paseo voice mode and dictation in seven languages: Google Cloud TTS, music instead of the waiting beep, compressed audio both ways, and fixes for the sentences Paseo drops.",
   "license": "MIT",
   "author": "Roman Yarmolenko",
   "repository": {
@@ -17,7 +17,14 @@
     "paseo-plugin",
     "tts",
     "text-to-speech",
+    "multilingual",
+    "english",
+    "spanish",
+    "french",
+    "portuguese",
+    "german",
     "russian",
+    "ukrainian",
     "google-cloud"
   ],
   "type": "module",

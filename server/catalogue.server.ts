@@ -30,7 +30,7 @@ export const BUILTIN: readonly Builtin[] = [
   {
     id: "lobby-time",
     title: "Lobby Time",
-    note: "лобби-джаз, спокойный",
+    note: "calm lobby jazz",
     url: "https://incompetech.com/music/royalty-free/mp3-royaltyfree/Lobby%20Time.mp3",
     sha256: "bc47dc1f1a0b1fe4ff631cee89ca3987b8f7b52f533d06233665d51300331beb",
     fromSeconds: 30,
@@ -38,7 +38,7 @@ export const BUILTIN: readonly Builtin[] = [
   {
     id: "spy-glass",
     title: "Spy Glass",
-    note: "ретро-лаунж",
+    note: "retro lounge",
     url: "https://incompetech.com/music/royalty-free/mp3-royaltyfree/Spy%20Glass.mp3",
     sha256: "e790c5ceb0b64eed48d83ee3aa458daebc246d751bf7cf12c87231faadb5f6f1",
     fromSeconds: 30,
@@ -46,7 +46,7 @@ export const BUILTIN: readonly Builtin[] = [
   {
     id: "samba-isobel",
     title: "Samba Isobel",
-    note: "самба, живее остальных",
+    note: "samba, livelier than the rest",
     url: "https://incompetech.com/music/royalty-free/mp3-royaltyfree/Samba%20Isobel.mp3",
     sha256: "563bd5a5686560f56f012d302a672796110cab392a0e3ecbbfdd8f96c6489527",
     fromSeconds: 30,
@@ -54,7 +54,7 @@ export const BUILTIN: readonly Builtin[] = [
   {
     id: "mining-by-moonlight",
     title: "Mining by Moonlight",
-    note: "медленный лаунж",
+    note: "slow lounge",
     url: "https://incompetech.com/music/royalty-free/mp3-royaltyfree/Mining%20by%20Moonlight.mp3",
     sha256: "683e5638ab2b3017a89d9c9a2ab7a3b516956f9dc5651740fed3508eddd35997",
     fromSeconds: 30,

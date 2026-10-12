@@ -193,7 +193,7 @@ describe("the local engine's voice with nothing to make MP3 with", { timeout: 30
         provider: "local",
         voice: "stand-in",
         model: "stand-in",
-        language: "russian",
+        speechLocale: "ru-RU",
         rate: 1,
         steady: false,
         cue: "",

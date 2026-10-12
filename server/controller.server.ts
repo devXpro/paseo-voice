@@ -2,6 +2,9 @@ import { existsSync } from "node:fs";
 import { readdir, stat } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
+import { msg, say, t } from "../shared/i18n/index.ts";
+import type { UiLanguage } from "../shared/i18n/languages.ts";
+import { isSpeechLocale, localeOfVoice, speechLanguageOf } from "../shared/languages.shared.ts";
 import { LOCAL_MODEL, type status as statusSchema } from "../shared/voice.shared.ts";
 import { installedRelease } from "./binary.server.ts";
 import { isDictationWired, isWired, wire, wireDictation as writeDictation } from "./config.server.ts";
@@ -28,7 +31,17 @@ import {
   inspect as inspectPatches,
   revert as revertPatches,
 } from "./patches.server.ts";
-import { clampVolume, clampRate, RATE_MAX, VOLUME_MAX, RATE_MIN, readStored, type Stored, writeStored } from "./state.server.ts";
+import {
+  clampVolume,
+  clampRate,
+  dictionaryOf,
+  RATE_MAX,
+  VOLUME_MAX,
+  RATE_MIN,
+  readStored,
+  type Stored,
+  writeStored,
+} from "./state.server.ts";
 import { resetsAt, summary } from "./usage.server.ts";
 import {
   createRecogniser,
@@ -48,6 +61,10 @@ export type Status = z.infer<typeof statusSchema>;
 export type Controller = {
   status(): Promise<Status>;
   setProvider(provider: "google" | "local"): Promise<Status>;
+  setSpeechLocale(locale: string): Promise<Status>;
+  setUiLanguage(language: UiLanguage): Promise<Status>;
+  /** The panel's language alone, without the round trip to Google a status costs. */
+  uiLanguage(): Promise<UiLanguage>;
   setCloudVoice(voice: string): Promise<Status>;
   setLocalVoice(voice: string): Promise<Status>;
   setActiveModel(id: string): Promise<Status>;
@@ -88,6 +105,9 @@ export type Controller = {
 
 /** The local engine binary published for this platform is macOS on Apple silicon only. */
 const localSupported = process.platform === "darwin" && process.arch === "arm64";
+
+/** Whisper's code for the language speech is in now. */
+const whisperOf = (stored: Stored): string => speechLanguageOf(stored.speechLocale).whisper;
 
 /** Younger than this, a daemon was started by an update or a launch and is nobody's session yet. */
 const FRESH_DAEMON_SECONDS = 120;
@@ -136,9 +156,9 @@ export function createController(options: {
   // Set after a config write: the daemon resolves speech providers once, at startup.
   let restartRequired = false;
   let binaryRelease: string | null = null;
-  // The catalogue is asked of Google once and held: it changes when Google ships a
-  // voice, not between two taps on a screen.
-  let catalogue: GoogleVoice[] | null = null;
+  // The catalogue is asked of Google once per accent and held: it changes when Google
+  // ships a voice, not between two taps on a screen.
+  const catalogue = new Map<string, GoogleVoice[]>();
   let cloudError = "";
 
   // Dictation. The engine is a child process kept warm between sentences; the rest is
@@ -150,23 +170,25 @@ export function createController(options: {
   let dictationBusy = "";
   let dictationError = "";
 
-  async function cloudVoices(key: string): Promise<GoogleVoice[]> {
+  async function cloudVoices(key: string, locale: string): Promise<GoogleVoice[]> {
     if (!key) {
-      catalogue = null;
+      catalogue.clear();
       cloudError = "";
       return [];
     }
-    if (catalogue) {
-      return catalogue;
+    const known = catalogue.get(locale);
+    if (known) {
+      return known;
     }
     try {
-      catalogue = await listVoices(key);
+      const voices = await listVoices(key, locale);
+      catalogue.set(locale, voices);
       cloudError = "";
+      return voices;
     } catch (failure) {
-      catalogue = null;
       cloudError = failure instanceof Error ? failure.message : String(failure);
+      return [];
     }
-    return catalogue ?? [];
   }
 
   /** Everything the dictation section needs, gathered in one pass. */
@@ -193,7 +215,7 @@ export function createController(options: {
   async function snapshot(stored: Stored): Promise<Status> {
     const key = await readKey();
     const [voices, models, usage, whisperSize, patch, cues, music] = await Promise.all([
-      cloudVoices(key),
+      cloudVoices(key, stored.speechLocale),
       installedModels(),
       summary(),
       dictationState(stored.port),
@@ -228,7 +250,8 @@ export function createController(options: {
       rateMax: RATE_MAX,
       steady: stored.steady,
       phoneSafe: stored.phoneSafe,
-      language: stored.language,
+      speechLocale: stored.speechLocale,
+      uiLanguage: stored.uiLanguage,
 
       proxy: proxy(),
       wired: await isWired(stored.port),
@@ -253,7 +276,7 @@ export function createController(options: {
         downloadedBytes: downloaded,
         downloadTotal,
         busy: dictationBusy,
-        dictionary: stored.dictionary,
+        dictionary: dictionaryOf(stored),
         error: dictationError || recogniser.lastError(),
       },
       error: "",
@@ -263,17 +286,22 @@ export function createController(options: {
   /**
    * Fills in a choice nobody has made yet, so a fresh install speaks rather than
    * refusing. The default voice is the steadiest male Chirp measured by ear and by
-   * pitch wobble; the local fallback takes whatever model is actually on disk.
+   * pitch wobble — Orus, which every accent with Chirp 3 HD has; pt-PT has none and
+   * takes a Standard voice. The local fallback takes whatever model is on disk.
+   *
+   * A voice from another accent is replaced the same way: it would read this language
+   * with that accent, or not at all.
    */
   async function resolved(): Promise<Stored> {
     const stored = await readStored();
     let next = stored;
 
-    if (!next.googleVoice) {
-      const voices = await cloudVoices(await readKey());
+    if (!next.googleVoice || localeOfVoice(next.googleVoice) !== next.speechLocale) {
+      const voices = await cloudVoices(await readKey(), next.speechLocale);
       const preferred =
         voices.find((voice) => voice.name.endsWith("Chirp3-HD-Orus")) ??
         voices.find((voice) => voice.tier === "chirp3-hd" && voice.gender === "male") ??
+        voices.find((voice) => voice.gender === "male") ??
         voices[0];
       if (preferred) {
         next = { ...next, googleVoice: preferred.name };
@@ -310,6 +338,55 @@ export function createController(options: {
       }
       log(`voice: provider ${provider}`);
       return snapshot(next);
+    },
+
+    async setSpeechLocale(locale) {
+      const stored = await resolved();
+      if (!isSpeechLocale(locale) || locale === stored.speechLocale) {
+        return snapshot(stored);
+      }
+      // The voice of the accent being left is kept for coming back; the new accent gets
+      // the one chosen for it before, or none — and `resolved` picks its default.
+      const voicesByLocale = { ...stored.voicesByLocale, ...(stored.googleVoice ? { [stored.speechLocale]: stored.googleVoice } : {}) };
+      let next: Stored = {
+        ...stored,
+        speechLocale: locale,
+        voicesByLocale,
+        googleVoice: voicesByLocale[locale] ?? "",
+      };
+      // The local engine knows ten languages; with one it lacks, Google speaks instead,
+      // and without a key the panel says why nothing will.
+      if (next.provider === "local" && !speechLanguageOf(locale).engine && (await readKey())) {
+        next = { ...next, provider: "google" };
+        if (engine.running()) {
+          engine.stop();
+        }
+      }
+      await writeStored(next);
+      next = await resolved();
+      log(`voice: speech in ${locale}, voice ${next.googleVoice || "none yet"}`);
+      // Dictation follows: the plugin's own recogniser takes the language and that
+      // language's dictionary at start. Paseo's config is not touched, so the daemon
+      // keeps running — its voice-mode recogniser detects the language by itself.
+      if (recogniser.running()) {
+        try {
+          await recogniser.ensure(next.dictationModel, whisperOf(next), dictionaryOf(next));
+        } catch (failure) {
+          dictationError = failure instanceof Error ? failure.message : String(failure);
+        }
+      }
+      return snapshot(next);
+    },
+
+    async setUiLanguage(language) {
+      const stored = await resolved();
+      const next = { ...stored, uiLanguage: language };
+      await writeStored(next);
+      return snapshot(next);
+    },
+
+    async uiLanguage() {
+      return (await readStored()).uiLanguage;
     },
 
     async setCloudVoice(voice) {
@@ -388,7 +465,7 @@ export function createController(options: {
         cloudError = failure instanceof Error ? failure.message : String(failure);
         return snapshot(await resolved());
       }
-      catalogue = null;
+      catalogue.clear();
       return snapshot(await resolved());
     },
 
@@ -397,7 +474,7 @@ export function createController(options: {
      * is running rather than being left to look frozen.
      */
     async installRecogniser() {
-      dictationBusy = "Ставлю движок через Homebrew…";
+      dictationBusy = msg("dictation.busyInstalling");
       dictationError = "";
       try {
         await installEngine(log);
@@ -464,12 +541,12 @@ export function createController(options: {
       dictationError = "";
       if (on) {
         if ((await installedBytes(stored.dictationModel)) === 0) {
-          dictationError = "сначала скачай модель";
+          dictationError = msg("dictation.downloadFirst");
           return snapshot(stored);
         }
-        dictationBusy = "Поднимаю движок…";
+        dictationBusy = msg("dictation.busyStarting");
         try {
-          await recogniser.ensure(stored.dictationModel, stored.language === "russian" ? "ru" : "en", stored.dictionary);
+          await recogniser.ensure(stored.dictationModel, whisperOf(stored), dictionaryOf(stored));
         } catch (failure) {
           dictationError = failure instanceof Error ? failure.message : String(failure);
           dictationBusy = "";
@@ -479,7 +556,7 @@ export function createController(options: {
       } else {
         recogniser.stop();
       }
-      const changed = await writeDictation(stored.port, on, stored.dictationModel, stored.language === "russian" ? "ru" : "en");
+      const changed = await writeDictation(stored.port, on, stored.dictationModel, whisperOf(stored));
       if (changed) {
         restartRequired = true;
         log(`voice: dictation ${on ? "wired to" : "returned from"} 127.0.0.1:${stored.port}`);
@@ -490,12 +567,13 @@ export function createController(options: {
     /** The engine takes this at startup, so a change costs it a restart — about a second. */
     async setDictionary(text) {
       const stored = await resolved();
-      const next = { ...stored, dictionary: text.trim() };
+      const language = speechLanguageOf(stored.speechLocale).id;
+      const next = { ...stored, dictionaries: { ...stored.dictionaries, [language]: text.trim() } };
       await writeStored(next);
       if (recogniser.running()) {
-        dictationBusy = "Перезапускаю движок со словарём…";
+        dictationBusy = msg("dictation.busyRestarting");
         try {
-          await recogniser.ensure(next.dictationModel, next.language === "russian" ? "ru" : "en", next.dictionary);
+          await recogniser.ensure(next.dictationModel, whisperOf(next), dictionaryOf(next));
         } catch (failure) {
           dictationError = failure instanceof Error ? failure.message : String(failure);
         } finally {
@@ -507,10 +585,10 @@ export function createController(options: {
 
     /** Reads this person's own dictated turns and keeps the words they actually use. */
     async mineDictionary() {
-      dictationBusy = "Читаю переписки…";
+      dictationBusy = msg("dictation.busyReading");
       dictationError = "";
       try {
-        const terms = await mine();
+        const terms = await mine(speechLanguageOf((await resolved()).speechLocale).id);
         return await this.setDictionary(asPrompt(terms));
       } catch (failure) {
         dictationError = failure instanceof Error ? failure.message : String(failure);
@@ -521,7 +599,7 @@ export function createController(options: {
     },
 
     async refreshCloud() {
-      catalogue = null;
+      catalogue.clear();
       cloudError = "";
       return snapshot(await resolved());
     },
@@ -552,7 +630,7 @@ export function createController(options: {
 
     async applyToPaseo() {
       const stored = await resolved();
-      const changed = await wire(stored.port, stored.language === "russian" ? "ru" : "en");
+      const changed = await wire(stored.port, whisperOf(stored));
       if (!changed) {
         log("voice: already wired, config left alone");
         return snapshot(stored);
@@ -595,14 +673,14 @@ export function createController(options: {
         return;
       }
       if ((await installedBytes(stored.dictationModel)) === 0) {
-        dictationError = "модель не скачана, а диктовка прописана на плагин";
+        dictationError = msg("dictation.modelMissingWired");
         return;
       }
       try {
-        await recogniser.ensure(stored.dictationModel, stored.language === "russian" ? "ru" : "en", stored.dictionary);
+        await recogniser.ensure(stored.dictationModel, whisperOf(stored), dictionaryOf(stored));
       } catch (failure) {
         dictationError = failure instanceof Error ? failure.message : String(failure);
-        log(`voice: dictation did not resume: ${dictationError}`);
+        log(`voice: dictation did not resume: ${say("en", dictationError)}`);
       }
     },
 
@@ -612,6 +690,8 @@ export function createController(options: {
      * once per new thing to say, that they could not.
      */
     async autoPatch() {
+      // Notifications are read by a person, in the panel's language; the log stays English.
+      const ui = (await readStored()).uiLanguage;
       let report: Awaited<ReturnType<typeof autoApplyPatches>>;
       try {
         report = await autoApplyPatches();
@@ -619,8 +699,8 @@ export function createController(options: {
         // The run itself broke. Quiet here would read as "nothing to put back" after
         // every update from now on, which is the one outcome worse than an alarm.
         const message = failure instanceof Error ? failure.message : String(failure);
-        log(`voice: auto-patch failed: ${message}`);
-        await notify("Paseo Voice: автоналожение сломалось", message).catch(() => {});
+        log(`voice: auto-patch failed: ${say("en", message)}`);
+        await notify(t(ui, "notify.autoBroke"), say(ui, message)).catch(() => {});
         return;
       }
       if (!report) {
@@ -630,11 +710,11 @@ export function createController(options: {
         log(`voice: auto-patch: ${id} written onto Paseo ${report.version}`);
       }
       for (const one of report.alerts) {
-        log(`voice: auto-patch: ${one.id} left alone: ${one.text}`);
+        log(`voice: auto-patch: ${one.id} left alone: ${say("en", one.text)}`);
       }
       if (report.fresh) {
-        const which = report.alerts.map((one) => `«${one.title}»`).join(", ");
-        await notify("Paseo Voice: патч не лёг", `Paseo ${report.version}: ${which}. Подробности в разделе «Патч Paseo».`).catch(
+        const which = report.alerts.map((one) => say(ui, one.title)).join(", ");
+        await notify(t(ui, "notify.notApplied"), t(ui, "notify.notAppliedBody", { version: report.version, which })).catch(
           (failure: unknown) => log(`voice: notification failed: ${String(failure)}`),
         );
       }
@@ -642,14 +722,14 @@ export function createController(options: {
       if (report.written.length === 0) {
         return;
       }
-      const music = report.written.includes("cue") ? " Музыка ожидания на десктопе — со следующего запуска приложения." : "";
+      const music = report.written.includes("cue") ? t(ui, "notify.music") : "";
       const told = (text: string) =>
-        notify("Paseo Voice: правки вернулись", `Paseo ${report.version}: ${text}${music}`).catch((failure: unknown) =>
+        notify(t(ui, "notify.back"), t(ui, "notify.backBody", { version: report.version, text, music })).catch((failure: unknown) =>
           log(`voice: notification failed: ${String(failure)}`),
         );
       if (!report.archived) {
         // Only the bundle, which the window reads; the daemon has nothing new to load.
-        await told("правка наложена.");
+        await told(t(ui, "notify.oneApplied"));
         return;
       }
       // A daemon this young was just started by an update or a launch, so no turn is
@@ -660,13 +740,13 @@ export function createController(options: {
         try {
           restartDaemon(path.join(paths.root, "restart.log"));
           log(`voice: auto-patch: restarting the daemon, up ${uptime} s, to load the corrections`);
-          await told("правки наложены, демон перезапускается.");
+          await told(t(ui, "notify.appliedRestarting"));
           return;
         } catch (failure) {
           log(`voice: auto-patch: could not restart the daemon: ${String(failure)}`);
         }
       }
-      await told("правки наложены — заработают после перезапуска Paseo.");
+      await told(t(ui, "notify.appliedAfterRestart"));
     },
 
     markBinaryChanged() {

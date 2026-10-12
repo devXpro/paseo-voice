@@ -6,37 +6,57 @@
 
 # 🎙️ paseo-voice
 
-### Your agent, out loud and in Russian — with lounge music while it thinks
+### Your agents, out loud in seven languages — with lounge music while they think
 
-Google Cloud Text-to-Speech for [Paseo](https://paseo.sh)'s voice mode, a local neural
-engine behind it for when there is no key or no network, and corrections for the
-things in Paseo that no setting reaches.
+Natural voices for [Paseo](https://paseo.sh)'s voice mode and dictation in English,
+Spanish, French, Portuguese, German, Russian and Ukrainian: Google Cloud Text-to-Speech,
+a local neural engine behind it for when there is no key or no network, and corrections
+for the things in Paseo that no setting reaches.
 
 [![Release](https://img.shields.io/github/v/release/devXpro/paseo-voice?style=flat-square&color=111111&labelColor=111111&label=release)](https://github.com/devXpro/paseo-voice/releases)
 [![Paseo](https://img.shields.io/badge/Paseo-%E2%89%A5%200.10-111111?style=flat-square&labelColor=111111)](https://paseo.sh)
 [![Licence](https://img.shields.io/github/license/devXpro/paseo-voice?style=flat-square&color=111111&labelColor=111111&label=licence)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-122%20passing-111111?style=flat-square&labelColor=111111)](docs/development.md)
+[![Tests](https://img.shields.io/badge/tests-162%20passing-111111?style=flat-square&labelColor=111111)](docs/development.md)
 
-🇷🇺 **Real Russian voices** · 🎶 **Music instead of the beep** · 📊 **Spend metered live** · 🩹 **Six bugs fixed in Paseo itself** · 📶 **Voice in a sixth of the traffic, both ways**
+🗣️ **Seven languages, thirteen accents** · 🎶 **Music instead of the beep** · 📊 **Spend metered live** · 🩹 **Six bugs fixed in Paseo itself** · 📶 **Voice in a sixth of the traffic, both ways**
 
 </div>
 
 ---
 
-The settings panel is in Russian, deliberately — so is the audience. Everything else
-here, including these docs, is in English.
+The settings panel speaks the same seven languages — English by default, chosen apart
+from the language you talk to your agents in.
 
 ## 🤔 Why it exists
 
-Paseo's voice mode defaults to a local English-only stack — Parakeet for recognition,
-Kokoro for speech — so speaking Russian to it produces silence. The only seam for a
+Paseo's voice mode defaults to a local English-only stack — Parakeet v2 for
+recognition, Kokoro for speech — so speaking anything else to it produces silence or
+nonsense, and even in English the voices are a step behind. The only seam for a
 different engine is the OpenAI provider: point `providers.openai.tts.baseUrl` somewhere
 local and Paseo will read through it. This plugin is that somewhere.
 
-It began as a local-only plugin and still carries that engine. Google won on the two
-things that matter for an assistant reading answers aloud: it has actual Russian
-speakers, and it synthesises four times faster than it speaks, so the gaps between
-sentences disappear.
+It began as a local-only plugin for Russian and still carries that engine. Google won on
+the two things that matter for an assistant reading answers aloud: it has native
+speakers of every language here, and it synthesises four times faster than it speaks,
+so the gaps between sentences disappear.
+
+## 🗣️ Languages
+
+| Language | Accents | Voice mode | Dictation | Local engine |
+|---|---|---|---|---|
+| English | en-US, en-GB, en-AU, en-IN | ✅ | ✅ | ✅ |
+| Español | es-ES, es-US | ✅ | ✅ | ✅ |
+| Français | fr-FR, fr-CA | ✅ | ✅ | ✅ |
+| Português | pt-BR, pt-PT | ✅ | ✅ | ✅ |
+| Deutsch | de-DE | ✅ | ✅ | ✅ |
+| Русский | ru-RU | ✅ | ✅ | ✅ |
+| Українська | uk-UA | ✅ | ✅ | — |
+
+One choice under **Language** drives the voice, dictation and the allowance estimate,
+and changing it never restarts Paseo. Every language is tested end to end: a question
+asked aloud, answered aloud, and the answer listened back to check which language the
+speaker actually spoke. [docs/voices.md](docs/voices.md#languages-and-accents) has the
+details.
 
 ## 📦 Install
 
@@ -48,10 +68,10 @@ No build step and no `npm install`: the daemon supplies `@getpaseo/plugin`, `zod
 `react`, `react-native` and `@tanstack/react-query` to plugin bundles, and everything
 else here is a `node:` builtin.
 
-Then open **Голос** in the sidebar, paste a Google API key, pick a voice, and press
-**Прописать** under Подключение. Paseo resolves speech providers once at startup, so
-restart the app afterwards. Getting a key, and what it costs, is in
-[docs/google.md](docs/google.md).
+Then open **Voice** in the sidebar, choose your language under **Language**, paste a
+Google API key under **Voice**, pick a voice, and press **Write it in** under
+**Connection**. Paseo resolves speech providers once at startup, so restart the app
+afterwards. Getting a key, and what it costs, is in [docs/google.md](docs/google.md).
 
 **macOS on Apple silicon** for the local fallback — upstream publishes
 `qwen_tts-macos-arm64` and nothing else. The Google path has no such limit.
@@ -60,14 +80,15 @@ restart the app afterwards. Getting a key, and what it costs, is in
 
 | Section | |
 |---|---|
-| 🎙️ **Голос** | Provider, billing family, voice — each with a play button. Tempo and delivery. [docs/voices.md](docs/voices.md) |
-| 📊 **Лимиты** | A bar per billing family: characters spent this month, hours of speech left, what any overspend cost. [docs/google.md](docs/google.md) |
-| 🎶 **Звук ожидания** | What loops while the agent thinks: four shipped tracks, your own files, or silence. [docs/music.md](docs/music.md) |
-| 🩹 **Патч Paseo** | One patch, one button: fixes in Paseo's own code, and its audio compressed both ways — the agent's voice as MP3, the phone's microphone as Opus. Put back after a Paseo update when the files are ones it was reviewed against. [docs/patches.md](docs/patches.md) |
-| 🖥️ **Локальный движок** | The fallback: binary, model, state. [docs/local-engine.md](docs/local-engine.md) |
-| ⚙️ **Речь агента** | The two daemon settings voice mode cannot work without. [docs/patches.md](docs/patches.md#the-two-daemon-settings) |
-| ⌨️ **Диктовка** | Reports whether the Whisper model is where `paseo-whisper` looks for it. |
-| 🔗 **Подключение** | Points `~/.paseo/config.json` at this plugin's proxy. |
+| 🌐 **Language** | The panel's own language, and the language and accent of voice and dictation. [docs/voices.md](docs/voices.md#languages-and-accents) |
+| 🎙️ **Voice** | Provider, billing family, voice — each with a play button. Tempo and delivery. [docs/voices.md](docs/voices.md) |
+| 📊 **Limits** | A bar per billing family: characters spent this month, hours of speech left, what any overspend cost. [docs/google.md](docs/google.md) |
+| 🎶 **Waiting sound** | What loops while the agent thinks: four shipped tracks, your own files, or silence. [docs/music.md](docs/music.md) |
+| 🩹 **Paseo patch** | One patch, one button: fixes in Paseo's own code, and its audio compressed both ways — the agent's voice as MP3, the phone's microphone as Opus. Put back after a Paseo update when the files are ones it was reviewed against. [docs/patches.md](docs/patches.md) |
+| 🖥️ **Local engine** | The fallback: binary, model, state. [docs/local-engine.md](docs/local-engine.md) |
+| ⌨️ **Dictation** | Whisper Large v3 Turbo through `whisper-server`: the engine, its weights, a dictionary per language, and handing Paseo's dictation to it. |
+| ⚙️ **Agent speech** | The two daemon settings voice mode cannot work without. [docs/patches.md](docs/patches.md#the-two-daemon-settings) |
+| 🔗 **Connection** | Points `~/.paseo/config.json` at this plugin's proxy. |
 
 ## 📚 Documentation
 
@@ -84,11 +105,12 @@ restart the app afterwards. Getting a key, and what it costs, is in
 
 ## 🔬 Three things that were measured, not assumed
 
-**Russian `Standard` and `Wavenet` are the same voices.** `ru-RU-Standard-A` and
-`ru-RU-Wavenet-A` return byte-identical audio. Same price per million, but Standard
-carries four times the free allowance — so Standard is the one to ask for.
+**`Standard` and `Wavenet` are the same voices.** Across all thirteen accents the same
+sentence came out the same length from Standard and WaveNet voices of the same letter
+in 54 pairs of 55 — the odd one out is pt-BR's letter A. Same price per million, but
+Standard carries four times the free allowance — so Standard is the one to ask for.
 
-**Stress is set through `customPronunciations`, not through the text.** A combining
+**Russian stress is set through `customPronunciations`, not through the text.** A combining
 acute (`за́мок`) is read aloud as a character and mangles the word. The right way is a
 field on the request carrying IPA, where `ˈ` precedes the stressed syllable — and it
 works on Chirp 3 HD, which otherwise reads SSML tags out loud.

@@ -19,7 +19,7 @@ for whatever Paseo asked for, counts the characters against the monthly allowanc
 applies the low-pass when it is on, and answers with the headerless 24 kHz samples
 Paseo expects of `response_format: "pcm"`.
 
-**Подключение** writes that `baseUrl` into `~/.paseo/config.json`, leaving dictation
+**Connection** writes that `baseUrl` into `~/.paseo/config.json`, leaving dictation
 alone. Paseo resolves speech providers once at startup, so it needs a restart.
 
 ### It buffers, and that is the point
@@ -80,10 +80,26 @@ nothing is installed at runtime.
 | `config.server.ts` | Reading and writing `~/.paseo/config.json`. |
 | `daemon-settings.server.ts` | The two daemon settings and the appended prompt; asking the daemon to reload or restart. |
 | `notify.server.ts` | A macOS notification, for what cannot wait until somebody opens the panel. |
-| `whisper.server.ts` | Reports on the dictation model. Reports only. |
+| `whisper.server.ts` | The dictation engine: installing `whisper-server`, fetching its weights, running it with the language and dictionary of the moment. |
+| `vocabulary.server.ts` | The dictionary mined from what this person dictated before, by the rules of the language spoken now. |
 | `paths.server.ts` | Every path in one place. |
 | `binary.server.ts` | Fetching the local engine from its release. |
 | `music.server.ts` | The `Track` shape, and the module the iOS build generates. |
+
+## Languages and words
+
+| | |
+|---|---|
+| `shared/languages.shared.ts` | The seven speech languages in one table: Google's accents, Whisper's code, the local engine's name, the audition line, the measured speaking rate. Everything that names a language reads it from here. |
+| `shared/i18n/` | The panel's words: one dictionary per interface language, English the reference the others are held to, and the few functions that look them up. |
+| `client/titles.client.ts` | The one line between the panel and the sidebar entry, so the entry's title follows the interface language. |
+
+The server never puts a sentence for a person into words itself. Statuses and errors
+travel as a key and its values — `msg("whisper.exited", { code })` — and the panel says
+them in whatever language it is in when it shows them, so switching languages takes
+effect at once, even for a message made before. The two exceptions read the stored
+language at the moment: macOS notifications, said in the panel's language, and the
+daemon's log, always in English.
 
 Files are named by where they run — `.server.ts`, `.client.tsx`, `.shared.ts` — which
 is how the bundler knows what goes where.
@@ -96,7 +112,8 @@ weights with it.
 ```
 ~/.paseo-voice/
   google-key.txt      the API key, mode 600
-  state.json          chosen provider, voice, tempo, cue, volume, prompt
+  state.json          chosen languages, provider, voice, tempo, cue, volume, prompt,
+                      a dictation dictionary per language
   usage.json          characters sent per family per month
   bin/qwen_tts        the local engine, fetched from a release and checksummed
   models/<id>/        local weights, one directory per model

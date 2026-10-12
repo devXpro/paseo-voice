@@ -1,5 +1,8 @@
 import { Buffer } from "node:buffer";
 import { setTimeout as sleep } from "node:timers/promises";
+import { localeOfVoice } from "../../shared/languages.shared.ts";
+import { readKey, speak } from "../../server/google.server.ts";
+import { lowPass } from "../../server/pcm.server.ts";
 import type { NativeAudio } from "./native-audio.ts";
 
 /**
@@ -24,9 +27,23 @@ export async function proxyPcm(text: string): Promise<Buffer> {
   return Buffer.from(await response.arrayBuffer());
 }
 
-/** PCM16 mono at 16 kHz, the rate the phone captures at. */
-export async function synthesize(text: string): Promise<Buffer> {
-  return resample(await proxyPcm(text), 24_000, 16_000);
+/**
+ * PCM16 mono at 16 kHz, the rate the phone captures at.
+ *
+ * Given a Google voice, the person speaks in it straight from Google — a language of its
+ * own, whatever the plugin is set to. Without one it is the plugin's proxy and its voice.
+ * The top comes off first either way, so going down to 16 kHz has nothing to alias.
+ */
+export async function synthesize(text: string, voice?: string): Promise<Buffer> {
+  if (!voice) {
+    return resample(await proxyPcm(text), 24_000, 16_000);
+  }
+  const key = await readKey();
+  if (!key) {
+    throw new Error("no Google key in ~/.paseo-voice: the person's voice is synthesised by Google");
+  }
+  // The accent named outright, so this works against any version of the Google client.
+  return resample(lowPass(await speak({ key, voice, text, language: localeOfVoice(voice) })), 24_000, 16_000);
 }
 
 /** Linear interpolation; plenty for speech that only has to be recognised. */

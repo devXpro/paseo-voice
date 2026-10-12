@@ -1,6 +1,7 @@
 import { readdir, readFile, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
+import type { SpeechLanguageId } from "../shared/languages.shared.ts";
 import { paths } from "./paths.server.ts";
 
 /**
@@ -85,6 +86,61 @@ const ORDINARY = new Set(
 
 export type Term = { word: string; count: number };
 
+/** Any word, in any script, with the dots, dashes and underscores code is made of. */
+const TOKEN = /[\p{L}\p{N}][\p{L}\p{N}._-]*[\p{L}\p{N}]/gu;
+
+/** A name or a piece of code rather than a word of the language: `api_gateway`, `node2`, `v0.11.2`, `useState`, `CRM`. */
+const codeShaped = (word: string): boolean =>
+  /\p{N}|[._-]/u.test(word) || /\p{Ll}\p{Lu}/u.test(word) || /^\p{Lu}{3,}$/u.test(word);
+
+/** Whether the word opens a sentence, where a capital is grammar rather than a name. */
+function opensSentence(text: string, at: number): boolean {
+  const before = text.slice(0, at).trimEnd();
+  return before === "" || /[.!?…]$/.test(before);
+}
+
+/** German capitalises every noun, so there a capital says nothing about a name. */
+const CAPITALS_ARE_NAMES: ReadonlySet<SpeechLanguageId> = new Set(["en", "es", "fr", "pt"]);
+
+/**
+ * The words of one spoken sentence worth a place in the hint.
+ *
+ * Russian keeps the rule it was built with: Latin words, and Cyrillic ones of four
+ * letters or more that are not ordinary speech. Every other language lacks a list of
+ * its ordinary words, and without one its own vocabulary would flood the hint — which
+ * then biases the recogniser towards those words instead of the rare ones. So there
+ * only what cannot be ordinary speech counts: code-shaped words, names (a capital
+ * mid-sentence, where capitals mean that), and words in a script foreign to the
+ * language — Latin inside Ukrainian.
+ */
+export function termsOf(text: string, language: SpeechLanguageId): string[] {
+  const out: string[] = [];
+  if (language === "ru") {
+    for (const match of text.matchAll(WORD)) {
+      const word = match[0];
+      const key = /[А-Яа-яЁё]/.test(word) ? word.toLowerCase() : word;
+      // Matched without case: the stop list is lower case and `Request` is not.
+      if (!ORDINARY.has(key.toLowerCase())) {
+        out.push(key);
+      }
+    }
+    return out;
+  }
+  const cyrillic = language === "uk";
+  for (const match of text.matchAll(TOKEN)) {
+    const word = match[0];
+    if ([...word].length < 3 || ORDINARY.has(word.toLowerCase())) {
+      continue;
+    }
+    const latin = /^[A-Za-z]/.test(word);
+    const name = CAPITALS_ARE_NAMES.has(language) && /^\p{Lu}\p{Ll}+$/u.test(word) && !opensSentence(text, match.index ?? 0);
+    if (codeShaped(word) || name || (cyrillic && latin)) {
+      out.push(word);
+    }
+  }
+  return out;
+}
+
 /** One transcript line, as Claude writes them. Only our own messages are wanted. */
 type Line = { type?: string; message?: { role?: string; content?: unknown } };
 
@@ -162,7 +218,7 @@ async function transcripts(): Promise<string[]> {
  * a sentence, which is what Whisper's prompt is for — it is read as context, not as
  * something to transcribe.
  */
-export async function mine(limit = 60, minCount = 3): Promise<Term[]> {
+export async function mine(language: SpeechLanguageId, limit = 60, minCount = 3): Promise<Term[]> {
   const counts = new Map<string, number>();
   for (const file of await transcripts()) {
     let body: string;
@@ -194,14 +250,8 @@ export async function mine(limit = 60, minCount = 3): Promise<Term[]> {
       if (!text || text.length > 600) {
         continue;
       }
-      for (const match of text.matchAll(WORD)) {
-        const word = match[0];
-        const key = /[А-Яа-яЁё]/.test(word) ? word.toLowerCase() : word;
-        // Matched without case: the stop list is lower case and `Request` is not.
-        if (ORDINARY.has(key.toLowerCase())) {
-          continue;
-        }
-        counts.set(key, (counts.get(key) ?? 0) + 1);
+      for (const word of termsOf(text, language)) {
+        counts.set(word, (counts.get(word) ?? 0) + 1);
       }
     }
   }

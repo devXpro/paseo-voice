@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { test } from "node:test";
 import type { Builtin } from "./catalogue.server.ts";
 import { fetchBuiltin } from "./cue.server.ts";
+import { say } from "../shared/i18n/index.ts";
 
 const BYTES = Buffer.from("pretend this is eight megabytes of samba");
 const ENTRY: Builtin = {
@@ -79,6 +80,6 @@ test("bytes that are simply the wrong file are still refused in the end", async 
         (async () => new Response(Buffer.from("a different song entirely"), { status: 200 })) as typeof fetch,
         () => fetchBuiltin(ENTRY, 0),
       ),
-    /контрольная сумма/,
+    (error: Error) => /checksum/.test(say("en", error.message)),
   );
 });

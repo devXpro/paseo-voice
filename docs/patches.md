@@ -1,6 +1,6 @@
 # What is changed inside Paseo
 
-One patch, written into Paseo's own code: **Патч Paseo** applies all of it with one
+One patch, written into Paseo's own code: **Paseo patch** applies all of it with one
 button and reverts all of it with the same one, and lists what it changes in plain words.
 Underneath it is a correction per file, each checked and kept on its own — that is what
 the sections below describe.
@@ -21,7 +21,7 @@ leading indentation is halved, then dropped, then the remainder is padded with s
 
 **It refuses rather than guesses.** Every correction is anchored to an exact string or
 a shape. An anchor that is missing, or that occurs twice, is a refusal — reported as
-«незнакомая версия Paseo». An upstream rewrite therefore cannot be half-applied.
+“a version of Paseo this patch does not know”. An upstream rewrite therefore cannot be half-applied.
 
 **A correction already in place is checked, not assumed.** Every patched file carries
 the marker `paseo-voice:`, but the marker only says that some version of a correction is
@@ -52,7 +52,7 @@ start.
 **Applying needs a restart.** The daemon already has the old code in memory. The panel
 says so when it matters.
 
-## Читать звук сразу
+## Read the sound at once
 
 `@getpaseo/server/.../agent/tts-manager.js`
 
@@ -72,7 +72,7 @@ correction also merges sentences up to the 260-character limit the manager alrea
 defines, which turns a seven-part answer into one or two — each part was its own
 request, its own round trip, and its own second of silence.
 
-## Голосовой ввод
+## Voice input
 
 `@getpaseo/server/.../session/voice/voice-turn-controller.js`
 
@@ -98,13 +98,13 @@ up there: the agent thinking, the agent talking, the person listening. Measured 
 | Since the previous phrase | What became of the next one |
 |---|---|
 | 25 s | heard |
-| 53 s | the start lost: «Тогда запусти пинг… девяносто раз» arrived as «90 раз» |
+| 53 s | the start lost: «Тогда запусти пинг… девяносто раз» (“Then run ping… ninety times”) arrived as «90 раз» (“90 times”) |
 | 85 s | the speech worker died (SIGTRAP inside onnxruntime); ten seconds later, an empty transcript |
 
 Now the recogniser is given a phrase only, from the moment the detector confirms it,
 together with the three seconds before. The detector confirms speech after 800 ms of it
 unbroken, and a short first word with a pause after it — «Так, …», «Слушай, …», «Стоп,
-хватит» — breaks that count: the phrase is confirmed only on the next word, over two
+хватит» (“So, …”, “Listen, …”, “Stop, enough”) — breaks that count: the phrase is confirmed only on the next word, over two
 seconds in. Kept for two seconds, «Стоп» was lost; three cover it. Between phrases
 nothing is decoded at all.
 
@@ -119,7 +119,7 @@ went nowhere, and voice mode heard nothing more until it was switched off and on
 new detector takes its place, and a phrase the old one was in the middle of is closed,
 since its end would never be heard.
 
-## Голосовая сессия
+## Voice session
 
 `@getpaseo/server/.../session/voice/voice-session.js`
 
@@ -136,22 +136,22 @@ The abort is now lifted whenever the person's turn is over, whatever came of it.
 line the correction follows — `Speech turn complete (…) – resuming TTS` — has always
 said exactly that.
 
-This one and the last two in [Голосовой ввод](#голосовой-ввод) were reproduced with the
+This one and the last two in [Voice input](#voice-input) were reproduced with the
 live harness before they were corrected, and `e2e/live/listening.live.ts` keeps them
 reproduced: it fails on a Paseo without the corrections. See [e2e.md](e2e.md).
 
-**Speech from the phone is taken as Opus** — see [below](#голос-с-телефона-в-opus).
+**Speech from the phone is taken as Opus** — see [below](#the-phones-voice-in-opus).
 
-## Диктовка в Opus
+## Dictation in Opus
 
 `@getpaseo/server/.../dictation/dictation-stream-manager.js`
 
 The same for dictation: a chunk that arrives as Opus becomes the PCM the stream was
 started with, before anything else sees it — and a chunk that arrives twice is decoded
 once, since Opus carries state from packet to packet. See
-[below](#голос-с-телефона-в-opus).
+[below](#the-phones-voice-in-opus).
 
-## Голос агента в MP3
+## The agent's voice in MP3
 
 `@getpaseo/server/.../speech/providers/openai/config.js`
 
@@ -166,7 +166,7 @@ through its file player, the desktop through Web Audio — but the daemon's conf
 `pcm` and nothing else. The correction asks for `mp3`, and this plugin's proxy answers:
 Google encodes MP3 itself, at 64 kbit/s — a sixth of the PCM, with no setting for
 less — and the local engine's PCM is encoded by `lame`, or `ffmpeg`, whichever is there.
-With neither, it goes as PCM: see [below](#локальный-движок-без-mp3).
+With neither, it goes as PCM: see [below](#local-engine-without-mp3).
 Google returns MP3 no slower than PCM: 358 ms against 439 for 117 characters, 694
 against 722 for 235.
 
@@ -174,7 +174,7 @@ The loss is audible only up close: on the phone's speaker nothing, in good headp
 slight smear on sibilants. `PASEO_VOICE_TTS_FORMAT=pcm` in the daemon's environment
 brings PCM back, which is how the tests compare the two.
 
-## Локальный движок без MP3
+## Local engine without MP3
 
 `@getpaseo/server/.../speech/providers/openai/tts.js`
 
@@ -195,7 +195,7 @@ play nothing. Google is untouched: it makes the MP3 itself, and the label stays 
 The header is the only thing added to the request. A real OpenAI endpoint ignores headers
 it does not know, and would refuse a body parameter it does not know.
 
-## Голос с телефона в Opus
+## The phone's voice in Opus
 
 The other direction. While voice mode is on and unmuted, and for the whole of a
 dictation, the phone streams its microphone to the daemon: 16 kHz PCM, 32 KB a second,
@@ -234,7 +234,7 @@ so that every sequence number arrives, and is not sent at all in voice mode.
 answers no, and every phone sends PCM from its next voice session or dictation — no
 restart, no rebuild. The way out when a phone's build gets the encoding wrong.
 
-## Своя музыка ожидания
+## Your own waiting music
 
 `app-dist/_expo/static/js/web/index-*.js` — the desktop client's bundle, a plain file
 beside the archive rather than inside it.
@@ -279,7 +279,7 @@ put back, each correction on its own:
   Its shape is the check, plus the parse above.
 - **Nothing goes into the archive** while the integrity fuse is on.
 
-It only does this if the last thing done by hand was **Наложить**. A fresh install
+It only does this if the last thing done by hand was **Apply**. A fresh install
 patches nothing unasked, and a revert stays a revert across updates.
 
 **Then the daemon is restarted**, since it already holds the old code — but only a
@@ -302,7 +302,7 @@ diff -u ~/.paseo-voice/patches/tts-manager.js.original ~/.paseo-voice/patches/tt
 
 If the correction still holds, add the new hash to `verified`. If the anchors moved,
 rewrite the splices first. Then `paseo plugin reload voice`, and the next start puts it
-in — or press **Наложить**, which goes by the anchors and trusts you about the rest.
+in — or press **Apply**, which goes by the anchors and trusts you about the rest.
 
 `npm test` says the same thing sooner: one test checks the installed Paseo against the
 `verified` lists and names the hash to add.
@@ -310,7 +310,7 @@ in — or press **Наложить**, which goes by the anchors and trusts you a
 ## The two daemon settings
 
 Separate from the patches, and reachable through configuration rather than code.
-**Речь агента** turns both on and calls `paseo reload`, so no restart is needed.
+**Agent speech** turns both on and calls `paseo reload`, so no restart is needed.
 
 - **`daemon.mcp.injectIntoAgents`** — off by default. Without it the daemon never
   attaches its MCP server to an agent, and `speak` lives inside that server. The

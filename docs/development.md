@@ -50,9 +50,11 @@ goes where, and it is not optional.
 **Both `contribute()` functions must be synchronous.** Anything async is started inside
 and allowed to settle later.
 
-**Code, comments and documentation are in English. The interface is in Russian** — so
-is the audience for a plugin about Russian speech. Error messages that surface in the
-panel are Russian for the same reason; messages that only ever reach a log are English.
+**Code, comments and documentation are in English. The interface is in seven
+languages**, from `shared/i18n/`. No sentence a person reads is written into code:
+the panel looks its words up, and the server sends statuses and errors as
+`msg(key, values)` for the panel to say. Messages that only ever reach a log are
+English.
 
 **Tests state what is true, not what is called.** `the fingerprint catches an edit that
 kept the file's size` rather than `test fingerprintOf`. A test name is the one piece of
@@ -60,7 +62,7 @@ documentation that cannot go stale without going red.
 
 ## What the tests cover
 
-122 of them, all `node:test`, no framework and no mocking library.
+162 of them, all `node:test`, no framework and no mocking library.
 
 The ones worth knowing about:
 
@@ -73,6 +75,12 @@ The ones worth knowing about:
   `verified` hashes, so an update that changed a corrected file fails here first.
 - `pcm.test.ts` measures the low-pass rather than trusting it.
 - `usage.test.ts` covers the billing arithmetic, including the month boundary.
+- `whisper.test.ts` restarts the dictation engine against a stand-in `whisper-server`
+  that takes a moment to load and a moment to go, as the real one does: one engine on
+  the port after a restart, after two overlapping ones, and none after a stop during a
+  start; its log on stderr is not a failure while it runs, and a death while loading
+  fails the start with the reason it gave. Every stand-in writes down its pid and the file
+  kills whatever is left, so a lost process fails the test instead of hanging it.
 
 There is no test that needs a Google key or a network.
 
@@ -82,6 +90,23 @@ need the patched iOS checkout and are kept out of `npm test`; see
 [e2e/README.md](../e2e/README.md). `npm run e2e` also compiles the phone's Opus encoder
 for this Mac, which needs Xcode's command-line tools; the live runs encode with
 `opusscript`, a development dependency.
+
+## Adding a language
+
+**One to speak and hear.** A row in `shared/languages.shared.ts`: Google's accents
+(check which have Chirp 3 HD — `listVoices` for the accent), Whisper's code, the local
+engine's name for it or `null`, a short audition line, and the speaking rate, measured
+the way the table's comment says. Then a case in `e2e/live/languages.live.ts`: a
+question with a one-word answer, the regexes that catch both, and a sentence to dictate.
+Check that Parakeet v3, Paseo's recogniser in voice mode, knows the language — it covers
+twenty-five European ones.
+
+**One to read the panel in.** A file in `shared/i18n/` exporting a `Dictionary`, its
+id and native name in `shared/i18n/languages.ts`, and a branch in `pluralOf` if its
+plurals follow neither English nor Slavic rules. TypeScript refuses a dictionary with a
+key missing; `shared/i18n/i18n.test.ts` refuses one with a placeholder missing or the
+wrong plural forms. Terms are taken from Paseo's own translation of its interface where
+it has one, so the panel speaks the same language as the app.
 
 ## Things known and not done
 

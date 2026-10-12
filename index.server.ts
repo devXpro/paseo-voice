@@ -29,9 +29,14 @@ import {
   setPrompt,
   setProvider,
   setRate,
+  setSpeechLocale,
   setSteady,
+  setUiLanguage,
+  getUiLanguage,
   voiceCodec,
 } from "./shared/voice.shared.ts";
+import { speechLanguageOf } from "./shared/languages.shared.ts";
+import { msg, sayAll } from "./shared/i18n/index.ts";
 import { installBinary } from "./server/binary.server.ts";
 import { ensureCodec } from "./server/codec.server.ts";
 import { createController } from "./server/controller.server.ts";
@@ -40,9 +45,11 @@ import { render as renderCue, warmUp as warmUpCue } from "./server/cue.server.ts
 import { speak as speakWithGoogle } from "./server/google.server.ts";
 import { createProxy } from "./server/proxy.server.ts";
 import { durationSeconds, trimPadding, wavOf } from "./server/pcm.server.ts";
-import { DEFAULTS, type Stored } from "./server/state.server.ts";
+import { DEFAULTS, dictionaryOf, type Stored } from "./server/state.server.ts";
 
-const log = (line: string) => console.log(line);
+// The daemon's log is English, whatever the panel is in: messages made for the panel are
+// put into English words on their way there.
+const log = (line: string) => console.log(sayAll("en", line));
 
 /** Two fixed ports: the proxy Paseo talks to, and the local engine behind it. Only the
  *  first ends up in anybody's config, but keeping them adjacent makes a clash obvious. */
@@ -84,13 +91,13 @@ export default function contribute(server: PluginServerContext) {
       provider: current.provider,
       voice: current.provider === "google" ? current.googleVoice : current.voice,
       model: current.activeModel,
-      language: current.language,
+      speechLocale: current.speechLocale,
       rate: current.rate,
       cue: current.cue,
       cueVolume: current.cueVolume,
       steady: current.steady,
       phoneSafe: current.phoneSafe,
-      dictionary: current.dictionary,
+      dictionary: dictionaryOf(current),
       googleKey: current.googleKey,
       pronunciations: [],
     }),
@@ -124,6 +131,9 @@ export default function contribute(server: PluginServerContext) {
 
   server.handle(getStatus, async () => fresh(await controller.status()));
   server.handle(setProvider, async (input) => fresh(await controller.setProvider(input.provider)));
+  server.handle(setSpeechLocale, async (input) => fresh(await controller.setSpeechLocale(input.locale)));
+  server.handle(setUiLanguage, async (input) => fresh(await controller.setUiLanguage(input.language)));
+  server.handle(getUiLanguage, async () => ({ language: await controller.uiLanguage() }));
   server.handle(setCloudVoice, async (input) => fresh(await controller.setCloudVoice(input.voice)));
   server.handle(setLocalVoice, async (input) => fresh(await controller.setLocalVoice(input.voice)));
   server.handle(setActiveModel, async (input) => fresh(await controller.setActiveModel(input.id)));
@@ -177,25 +187,29 @@ export default function contribute(server: PluginServerContext) {
     const at = await controller.choice();
     const voice = input.voice ?? (at.provider === "google" ? at.googleVoice : at.voice);
     if (!voice) {
-      return { wavBase64: "", seconds: 0, error: "голос не выбран" };
+      return { wavBase64: "", seconds: 0, error: msg("preview.noVoice") };
     }
     try {
       let pcm: Buffer;
       if (at.provider === "google") {
         if (!at.googleKey) {
-          return { wavBase64: "", seconds: 0, error: "нет ключа Google" };
+          return { wavBase64: "", seconds: 0, error: msg("preview.noKey") };
         }
         pcm = await speakWithGoogle({ key: at.googleKey, voice, text: input.text, rate: at.rate });
       } else {
+        const language = speechLanguageOf(at.speechLocale).engine;
+        if (!language) {
+          return { wavBase64: "", seconds: 0, error: msg("preview.noLanguage") };
+        }
         await engine.ensure(at.activeModel);
         engine.touch();
         const response = await fetch(`http://127.0.0.1:${engine.port}/v1/tts`, {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ speaker: voice, text: input.text, language: at.language, rate: at.rate }),
+          body: JSON.stringify({ speaker: voice, text: input.text, language, rate: at.rate }),
         });
         if (!response.ok) {
-          return { wavBase64: "", seconds: 0, error: `движок: ${response.status}` };
+          return { wavBase64: "", seconds: 0, error: msg("preview.engine", { status: response.status }) };
         }
         pcm = trimPadding(Buffer.from(await response.arrayBuffer()).subarray(44));
       }

@@ -1,5 +1,10 @@
 import { defineRpc } from "@getpaseo/plugin";
 import { z } from "zod";
+import { UI_LANGUAGES } from "./i18n/languages.ts";
+import { DEFAULT_SPEECH_LOCALE } from "./languages.shared.ts";
+
+const uiLanguage = z.enum(UI_LANGUAGES.map((one) => one.id) as [UiId, ...UiId[]]);
+type UiId = (typeof UI_LANGUAGES)[number]["id"];
 
 /**
  * The local engine: a pure-C Qwen3-TTS runtime, one binary per platform. It is the
@@ -183,7 +188,10 @@ export const status = z.object({
   steady: z.boolean().default(true),
   /** Whether speech is low-passed so a phone does not turn the top end into grit. */
   phoneSafe: z.boolean().default(true),
-  language: z.string().default("russian"),
+  /** The accent speech and dictation are in, as Google names it: `pt-BR`. */
+  speechLocale: z.string().default(DEFAULT_SPEECH_LOCALE),
+  /** The language the panel itself is read in. */
+  uiLanguage: uiLanguage.default("en"),
 
   /**
    * The local HTTP server everything speaks through. It can fail to come up while the
@@ -212,6 +220,35 @@ export const status = z.object({
 });
 
 export const getStatus = defineRpc({ name: "voice.status", input: z.object({}), output: status });
+
+/**
+ * Chooses the language speech and dictation are in, with its accent. Never touches
+ * Paseo's config, so it never restarts the daemon: the voice follows, the plugin's own
+ * recogniser restarts with that language's dictionary, and Paseo's recogniser in voice
+ * mode detects the language by itself.
+ */
+export const setSpeechLocale = defineRpc({
+  name: "voice.set-speech-locale",
+  input: z.object({ locale: z.string().min(2) }),
+  output: status,
+});
+
+/** Chooses the language the panel is read in. */
+export const setUiLanguage = defineRpc({
+  name: "voice.set-ui-language",
+  input: z.object({ language: uiLanguage }),
+  output: status,
+});
+
+/**
+ * Only the interface language, for the sidebar entry's title. Asked once when the app
+ * starts, which is why a full status — with its round trip to Google — is not used.
+ */
+export const getUiLanguage = defineRpc({
+  name: "voice.ui-language",
+  input: z.object({}),
+  output: z.object({ language: uiLanguage }),
+});
 
 export const setProvider = defineRpc({
   name: "voice.set-provider",

@@ -3,6 +3,7 @@ import React from "react";
 import { Pressable, Text, View } from "react-native";
 import { TextInput } from "@getpaseo/plugin/client/react-native";
 import type { z } from "zod";
+import type { Translator, UiLanguage } from "../shared/i18n/index.ts";
 import type { status } from "../shared/voice.shared.ts";
 
 export type Status = z.output<typeof status>;
@@ -15,11 +16,15 @@ export type Status = z.output<typeof status>;
 export type Lab = {
   data: Status;
   theme: PluginTheme;
+  /** The panel's words, in the language chosen for it. */
+  tr: Translator;
   compact: boolean;
   /** "web" on the desktop client, "ios" or "android" on a phone. */
   platform: string;
   busy: boolean;
   act: {
+    setUiLanguage(language: UiLanguage): void;
+    setSpeechLocale(locale: string): void;
     setProvider(provider: "google" | "local"): void;
     chooseCloudVoice(voice: string): void;
     chooseLocalVoice(voice: string): void;
@@ -66,8 +71,8 @@ export type Lab = {
   };
 };
 
-export function gigabytes(bytes: number): string {
-  return `${(bytes / 1_000_000_000).toFixed(2)} ГБ`;
+export function gigabytes(tr: Translator, bytes: number): string {
+  return tr.t("common.gigabytes", { n: tr.fixed(bytes / 1_000_000_000, 2) });
 }
 
 /** A grouped block of rows, the way a settings app stacks them under a quiet heading. */
@@ -511,28 +516,32 @@ export function VoiceRow({
 /** How much of a monthly allowance is gone, as a bar and the numbers behind it. */
 export function Meter({
   theme,
+  tr,
   label,
   note,
   used,
   free,
   owed,
   price,
+  charsPerHour,
   active,
   last,
 }: {
   theme: PluginTheme;
+  tr: Translator;
   label: string;
   note: string;
   used: number;
   free: number;
   owed: number;
   price: number;
+  /** How many characters an hour of speech takes in the language spoken now. */
+  charsPerHour: number;
   active: boolean;
   last?: boolean;
 }) {
   const ratio = free > 0 ? Math.min(1, used / free) : 0;
-  // 24 kHz Russian runs about 37 400 characters to the hour of speech, measured.
-  const hours = (count: number) => count / 37_400;
+  const hours = (count: number) => count / charsPerHour;
   const colour = owed > 0 ? theme.colors.statusWarning : active ? theme.colors.accent : theme.colors.foregroundMuted;
 
   return (
@@ -547,7 +556,7 @@ export function Meter({
     >
       <View style={{ flexDirection: "row", alignItems: "baseline", gap: 8 }}>
         <Text style={{ color: theme.colors.foreground, fontSize: 15, fontWeight: active ? "600" : "400" }}>{label}</Text>
-        {active ? <Text style={{ color: theme.colors.accent, fontSize: 11 }}>сейчас</Text> : null}
+        {active ? <Text style={{ color: theme.colors.accent, fontSize: 11 }}>{tr.t("common.now")}</Text> : null}
         <View style={{ flex: 1 }} />
         <Text style={{ color: theme.colors.foregroundMuted, fontSize: 12, fontVariant: ["tabular-nums"] }}>
           {Math.round(ratio * 100)}%
@@ -559,9 +568,12 @@ export function Meter({
       </View>
 
       <Text style={{ color: theme.colors.foregroundMuted, fontSize: 12, lineHeight: 17 }}>
-        {used.toLocaleString("ru-RU")} из {free.toLocaleString("ru-RU")} символов · осталось{" "}
-        {hours(Math.max(0, free - used)).toFixed(1)} ч речи
-        {owed > 0 ? ` · сверху набежало $${owed.toFixed(2)}` : ` · дальше $${price} за 1 млн`}
+        {tr.t("limits.meter", {
+          used: used.toLocaleString(tr.locale),
+          free: free.toLocaleString(tr.locale),
+          hours: tr.fixed(hours(Math.max(0, free - used)), 1),
+        })}
+        {owed > 0 ? tr.t("limits.meterOwed", { owed: owed.toFixed(2) }) : tr.t("limits.meterPrice", { price })}
       </Text>
       <Text style={{ color: theme.colors.foregroundMuted, fontSize: 11 }}>{note}</Text>
     </View>
@@ -575,17 +587,19 @@ export function Meter({
  */
 export function PromptEditor({
   theme,
+  tr,
   value,
   isDefault,
   busy,
   onSave,
   onReset,
-  placeholder = "Что агент должен проговаривать, а что оставлять на экране",
-  resetLabel = "Вернуть исходный",
-  emptyLabel = "исходный текст",
+  placeholder = tr.t("speech.placeholder"),
+  resetLabel = tr.t("speech.restore"),
+  emptyLabel = tr.t("speech.original"),
   minHeight = 200,
 }: {
   theme: PluginTheme;
+  tr: Translator;
   value: string;
   isDefault: boolean;
   busy: boolean;
@@ -630,7 +644,8 @@ export function PromptEditor({
       />
       <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
         <Text style={{ color: theme.colors.foregroundMuted, fontSize: 12, flex: 1 }}>
-          {draft.length} символов{isDefault && !dirty ? ` · ${emptyLabel}` : ""}
+          {tr.tn("common.characters", draft.length)}
+          {isDefault && !dirty ? ` · ${emptyLabel}` : ""}
         </Text>
         {!isDefault || dirty ? (
           <Pressable
@@ -655,7 +670,7 @@ export function PromptEditor({
           })}
         >
           <Text style={{ color: theme.colors.accentForeground, fontSize: 14, fontWeight: "600" }}>
-            {busy ? "Сохраняю…" : "Сохранить"}
+            {busy ? tr.t("common.saving") : tr.t("common.save")}
           </Text>
         </Pressable>
       </View>
@@ -675,6 +690,7 @@ export function PromptEditor({
  */
 export function KeyField({
   theme,
+  tr,
   hint,
   path,
   busy,
@@ -682,6 +698,7 @@ export function KeyField({
   onSave,
 }: {
   theme: PluginTheme;
+  tr: Translator;
   hint: string;
   path: string;
   busy: boolean;
@@ -703,7 +720,7 @@ export function KeyField({
           <Text style={{ color: theme.colors.foregroundMuted, fontSize: 12, marginTop: 2 }}>{path}</Text>
         </View>
         <Pressable onPress={() => setEditing(true)} disabled={busy}>
-          <Text style={{ color: theme.colors.accent, fontSize: 14 }}>Заменить</Text>
+          <Text style={{ color: theme.colors.accent, fontSize: 14 }}>{tr.t("common.replace")}</Text>
         </Pressable>
       </View>
     );
@@ -734,12 +751,12 @@ export function KeyField({
         <Text style={{ color: theme.colors.statusWarning, fontSize: 12 }}>{error}</Text>
       ) : odd ? (
         <Text style={{ color: theme.colors.statusWarning, fontSize: 12 }}>
-          Ключи Google начинаются с AIza и состоят из 39 символов. Проверю всё равно.
+          {tr.t("key.odd")}
         </Text>
       ) : null}
       <View style={{ flexDirection: "row", alignItems: "center", gap: 14 }}>
         <Text style={{ color: theme.colors.foregroundMuted, fontSize: 12, flex: 1 }}>
-          {busy ? "Спрашиваю Google…" : "Проверю у Google, потом сохраню"}
+          {busy ? tr.t("key.asking") : tr.t("key.willCheck")}
         </Text>
         {hint ? (
           <Pressable
@@ -749,7 +766,7 @@ export function KeyField({
             }}
             disabled={busy}
           >
-            <Text style={{ color: theme.colors.foregroundMuted, fontSize: 14 }}>Отмена</Text>
+            <Text style={{ color: theme.colors.foregroundMuted, fontSize: 14 }}>{tr.t("common.cancel")}</Text>
           </Pressable>
         ) : null}
         <Pressable
@@ -764,7 +781,7 @@ export function KeyField({
           })}
         >
           <Text style={{ color: theme.colors.accentForeground, fontSize: 14, fontWeight: "600" }}>
-            {busy ? "Проверяю…" : "Сохранить"}
+            {busy ? tr.t("key.checking") : tr.t("common.save")}
           </Text>
         </Pressable>
       </View>

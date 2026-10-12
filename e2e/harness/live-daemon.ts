@@ -69,12 +69,19 @@ const TURN_ENDS = new Set<TurnEvent>(["turn_completed", "turn_failed", "turn_can
 
 /** The text of a `speak` call, wherever the provider put it in the call's detail. */
 function spokenText(detail: unknown): string {
-  const shape = detail as { type?: string; text?: string; input?: { text?: unknown } } | undefined;
+  const shape = detail as { type?: string; text?: string; input?: string | { text?: unknown } | null } | undefined;
   if (shape?.type === "plain_text") {
     return shape.text ?? "";
   }
-  if (shape?.type === "unknown" && typeof shape.input?.text === "string") {
-    return shape.input.text;
+  if (shape?.type === "unknown") {
+    // Paseo 0.11's Claude provider puts the text itself there; before, the call's input.
+    const input = shape.input;
+    if (typeof input === "string") {
+      return input;
+    }
+    if (typeof input?.text === "string") {
+      return input.text;
+    }
   }
   return "";
 }
@@ -189,8 +196,11 @@ export async function openLiveSession(options: {
     }
   };
   const audioIds: string[] = [];
+  /** The audio itself, as it arrived: what the person would hear, for listening back. */
+  const received: { id: string; format: string; audio: Buffer }[] = [];
   const spoken: string[] = [];
   const heardCalls = new Set<string>();
+  const saidCalls = new Set<string>();
   const pending = new Map<string, { id: string; name: string; title?: string }>();
   const confirmed = new Set<string>();
   const watchdogs: ReturnType<typeof setTimeout>[] = [];
@@ -208,6 +218,7 @@ export async function openLiveSession(options: {
         return;
       }
       audioIds.push(payload.id);
+      received.push({ id: payload.id, format: payload.format, audio: Buffer.from(payload.audio, "base64") });
       // 24 kHz PCM16 is 48 bytes a millisecond; an MP3 says how long it is in its frames.
       const speechMs =
         payload.format === "pcm"
@@ -267,8 +278,12 @@ export async function openLiveSession(options: {
           const text = spokenText(item.detail);
           if (text && !heardCalls.has(item.callId)) {
             heardCalls.add(item.callId);
-            spoken.push(text);
             timeline.note("agent.speaks", text);
+          }
+          // Said only once the call has completed: one that failed put nothing in anybody's ears.
+          if (text && item.status === "completed" && !saidCalls.has(item.callId)) {
+            saidCalls.add(item.callId);
+            spoken.push(text);
           }
         } else if (item.type === "tool_call") {
           timeline.note("agent.tool", `${item.name} ${item.status}`);
@@ -347,7 +362,9 @@ export async function openLiveSession(options: {
     phone: ready,
     /** Every `audio_output` the daemon sent for this agent's voice, in order. */
     audioIds,
-    /** What the agent said through `speak`, one entry per call, in order. */
+    /** The same, with the audio. */
+    received,
+    /** What the agent said through `speak`, one entry per completed call, in order. */
     spoken,
     /** Ids of the audio the phone has confirmed as played. */
     confirmed,
@@ -367,8 +384,8 @@ export async function openLiveSession(options: {
 
     /** Says `text` into the phone's microphone, in the plugin's voice, at speaking speed.
      *  `onSpoken` runs as the last word leaves the speaker's mouth, before the quiet after it. */
-    async say(text: string, options: { onSpoken?: () => void } = {}): Promise<void> {
-      const speech = await synthesize(text);
+    async say(text: string, options: { onSpoken?: () => void; voice?: string } = {}): Promise<void> {
+      const speech = await synthesize(text, options.voice);
       timeline.note("person.says", text);
       saying = true;
       try {

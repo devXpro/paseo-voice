@@ -1,5 +1,6 @@
 import { type Stats, statSync } from "node:fs";
 import { open } from "node:fs/promises";
+import { msg } from "../shared/i18n/index.ts";
 
 /**
  * A file's stats as it is on disk. Paseo runs this plugin in one of its own Electron
@@ -67,7 +68,7 @@ export async function readArchive(file: string): Promise<Archive> {
       await handle.read(sizes, 0, 8, 0);
       const headerSize = sizes.readUInt32LE(4);
       if (headerSize <= 8 || headerSize > 64 * 1024 * 1024) {
-        throw new Error(`не похоже на asar: заголовок ${headerSize} байт`);
+        throw new Error(msg("asar.notAsar", { size: headerSize }));
       }
       const pickle = Buffer.alloc(headerSize);
       await handle.read(pickle, 0, headerSize, 8);
@@ -119,7 +120,7 @@ export async function readEntry(file: string, entry: Entry): Promise<Buffer> {
  */
 export async function writeEntry(file: string, entry: Entry, bytes: Buffer): Promise<void> {
   if (bytes.length !== entry.size) {
-    throw new Error(`замена ${bytes.length} байт не совпадает с ${entry.size} в архиве`);
+    throw new Error(msg("asar.sizeMismatch", { bytes: bytes.length, size: entry.size }));
   }
   await withoutAsar(async () => {
     const handle = await open(file, "r+");

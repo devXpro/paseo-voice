@@ -1,17 +1,20 @@
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { localeOfVoice } from "../shared/languages.shared.ts";
 import { paths } from "./paths.server.ts";
 
 /**
  * Google Cloud Text-to-Speech, which is where the speech comes from unless somebody
  * asks for the local engine instead.
  *
- * Two things here are not obvious and were measured rather than assumed. Russian
- * `Standard` and `Wavenet` voices of the same letter return byte-identical audio, so
- * they are one voice billed two ways — and `Standard` carries four times the free
- * allowance. And stress is set through `customPronunciations`, a field on the request,
- * not through a mark in the text: a combining acute in the text is read aloud as a
- * character and mangles the word.
+ * Two things here are not obvious and were measured rather than assumed. `Standard`
+ * and `Wavenet` voices of the same letter are one voice billed two ways — and
+ * `Standard` carries four times the free allowance. Measured across all thirteen
+ * accents by the length of the same sentence, since synthesis is not byte-for-byte
+ * repeatable: 54 pairs of 55 came out the same length to within two milliseconds; the
+ * one exception is pt-BR's letter A. And stress is set through
+ * `customPronunciations`, a field on the request, not through a mark in the text: a
+ * combining acute in the text is read aloud as a character and mangles the word.
  */
 
 const ENDPOINT = "https://texttospeech.googleapis.com/v1";
@@ -22,7 +25,7 @@ export const TIERS = [
     id: "chirp3-hd",
     marker: "Chirp3-HD",
     label: "Chirp 3 HD",
-    note: "новое поколение, самое живое",
+    note: "the newest generation, the most alive",
     freeChars: 1_000_000,
     dollarsPerMillion: 30,
   },
@@ -30,7 +33,7 @@ export const TIERS = [
     id: "standard",
     marker: "Standard",
     label: "Standard",
-    note: "те же голоса, что WaveNet, но вчетверо больше бесплатно",
+    note: "the same voices as WaveNet, four times as much free",
     freeChars: 4_000_000,
     dollarsPerMillion: 4,
   },
@@ -38,7 +41,7 @@ export const TIERS = [
     id: "wavenet",
     marker: "Wavenet",
     label: "WaveNet",
-    note: "звучит как Standard — берите Standard",
+    note: "sounds like Standard — take Standard",
     freeChars: 1_000_000,
     dollarsPerMillion: 4,
   },
@@ -84,7 +87,7 @@ export async function writeKey(key: string): Promise<void> {
     return;
   }
   // The call that proves it: cheap, read-only, and billed to nobody.
-  await listVoices(trimmed);
+  await listVoices(trimmed, "en-US");
   await mkdir(path.dirname(paths.googleKey), { recursive: true });
   await writeFile(paths.googleKey, `${trimmed}\n`, { mode: 0o600 });
 }
@@ -95,9 +98,13 @@ type VoicesReply = { voices?: { name: string; ssmlGender?: string }[] };
  * The catalogue, asked of Google rather than written down: the Chirp line is new and
  * its naming has already moved once, and a stale list fails in a way that reads like a
  * credentials problem.
+ *
+ * Only the accent's own voices are kept. Asked for `fr-CA`, Google also offers `fr-FR`
+ * voices that can read it — with a French accent, which is what choosing an accent is
+ * there to avoid.
  */
-export async function listVoices(key: string, language = "ru-RU"): Promise<GoogleVoice[]> {
-  const response = await fetch(`${ENDPOINT}/voices?languageCode=${language}&key=${key}`, {
+export async function listVoices(key: string, locale: string): Promise<GoogleVoice[]> {
+  const response = await fetch(`${ENDPOINT}/voices?languageCode=${locale}&key=${key}`, {
     signal: AbortSignal.timeout(15_000),
   });
   if (!response.ok) {
@@ -109,7 +116,7 @@ export async function listVoices(key: string, language = "ru-RU"): Promise<Googl
       tier: tierOf(voice.name) as TierId,
       gender: voice.ssmlGender === "FEMALE" ? "female" : "male",
     }))
-    .filter((voice) => voice.tier !== ("" as TierId));
+    .filter((voice) => voice.tier !== ("" as TierId) && localeOfVoice(voice.name) === locale);
 }
 
 export type Pronunciation = { phrase: string; ipa: string };
@@ -118,6 +125,7 @@ export type SpeakRequest = {
   key: string;
   voice: string;
   text: string;
+  /** The accent, when it should not simply be read off the voice's name. */
   language?: string;
   /** Pitch-preserving tempo. Google takes 0.25–4.0; the surface offers a narrower band. */
   rate?: number;
@@ -151,7 +159,7 @@ export async function speak(request: SpeakRequest): Promise<Buffer> {
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
       input,
-      voice: { languageCode: request.language ?? "ru-RU", name: request.voice },
+      voice: { languageCode: request.language ?? localeOfVoice(request.voice), name: request.voice },
       audioConfig: {
         audioEncoding: request.encoding ?? "LINEAR16",
         sampleRateHertz: 24_000,

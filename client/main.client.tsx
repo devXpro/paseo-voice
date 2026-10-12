@@ -35,16 +35,18 @@ import {
   setPrompt,
   setProvider,
   setRate,
+  setSpeechLocale,
   setSteady,
+  setUiLanguage,
 } from "../shared/voice.shared.ts";
+import { DEFAULT_UI_LANGUAGE, translator } from "../shared/i18n/index.ts";
+import { speechLanguageOf } from "../shared/languages.shared.ts";
+import { retitle } from "./titles.client.ts";
 import type { Lab } from "./lab.client.tsx";
 import { SECTIONS } from "./sections.client.tsx";
 import { type SectionId, summarise } from "./summary.ts";
 
 const QUERY_KEY = ["voice", "status"];
-
-/** One short line, so auditioning a voice never costs more than a few characters. */
-const PROBE = "Проверка связи. Слышно меня?";
 
 /** A 44-byte WAV with no samples, used only to buy the right to play later. */
 const SILENCE = "UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YQAAAAA=";
@@ -138,6 +140,8 @@ export function VoiceSurface({ theme, layout }: PluginSurfaceProps) {
   const fetchStatus = useRpc(getStatus);
   const install = useRpc(installBinary);
   const providerRpc = useRpc(setProvider);
+  const uiLanguageRpc = useRpc(setUiLanguage);
+  const speechLocaleRpc = useRpc(setSpeechLocale);
   const cloudVoiceRpc = useRpc(setCloudVoice);
   const localVoiceRpc = useRpc(setLocalVoice);
   const modelRpc = useRpc(setActiveModel);
@@ -221,6 +225,7 @@ export function VoiceSurface({ theme, layout }: PluginSurfaceProps) {
     queryFn: () => fetchStatus({}),
     refetchInterval: 5000,
   });
+  const tr = translator(data?.uiLanguage ?? DEFAULT_UI_LANGUAGE);
 
   // Every mutation answers with the whole status, so the cache is seeded from the reply
   // rather than invalidated — the surface never shows a stale value for a frame.
@@ -267,7 +272,7 @@ export function VoiceSurface({ theme, layout }: PluginSurfaceProps) {
     // Both surfaces, or neither. Checking only the browser here while the button was
     // shown for either is what made a patched phone offer a play it then refused.
     if (!AUDIO && !NATIVE) {
-      toast.error("Это приложение не даёт плагину проигрывать звук");
+      toast.error(tr.t("app.cannotPlay"));
       return;
     }
     const target = voice ?? (data?.provider === "google" ? data.cloudVoice : data?.localVoice) ?? "";
@@ -283,13 +288,15 @@ export function VoiceSurface({ theme, layout }: PluginSurfaceProps) {
 
     setListeningTo(target || "…");
     setListeningState("loading");
-    void probe({ text: PROBE, ...(voice ? { voice } : {}) })
+    // One short line in the language spoken now, so auditioning costs a few characters.
+    const text = speechLanguageOf(data?.speechLocale ?? "").probe;
+    void probe({ text, ...(voice ? { voice } : {}) })
       .then((result) => {
         if (token.current !== mine) {
           return;
         }
         if (result.error || !result.wavBase64) {
-          toast.error(result.error || "Синтез ничего не вернул");
+          toast.error(tr.say(result.error) || tr.t("app.nothingSynthesised"));
           hush();
           return;
         }
@@ -357,7 +364,7 @@ export function VoiceSurface({ theme, layout }: PluginSurfaceProps) {
     // Both surfaces, or neither. Checking only the browser here while the button was
     // shown for either is what made a patched phone offer a play it then refused.
     if (!AUDIO && !NATIVE) {
-      toast.error("Это приложение не даёт плагину проигрывать звук");
+      toast.error(tr.t("app.cannotPlay"));
       return;
     }
     const wasThis = listeningTo === cue;
@@ -376,7 +383,7 @@ export function VoiceSurface({ theme, layout }: PluginSurfaceProps) {
           return;
         }
         if (result.error || !result.wavBase64) {
-          toast.error(result.error || "Нечего проигрывать");
+          toast.error(tr.say(result.error) || tr.t("app.nothingToPlay"));
           hush();
           return;
         }
@@ -401,10 +408,17 @@ export function VoiceSurface({ theme, layout }: PluginSurfaceProps) {
   const lab: Lab = {
     data,
     theme,
+    tr,
     compact: layout.compact,
     platform: layout.platform,
     busy: false,
     act: {
+      setUiLanguage: (language) => {
+        // The sidebar entry follows at once; Paseo's Settings title, at the next start.
+        retitle(language);
+        run(uiLanguageRpc({ language }));
+      },
+      setSpeechLocale: (locale) => run(speechLocaleRpc({ locale })),
       setProvider: (provider) => run(providerRpc({ provider })),
       chooseCloudVoice: (voice) => run(cloudVoiceRpc({ voice })),
       chooseLocalVoice: (voice) => run(localVoiceRpc({ voice })),
@@ -471,14 +485,11 @@ export function VoiceSurface({ theme, layout }: PluginSurfaceProps) {
         }}
       >
         <Text style={{ color: theme.colors.statusWarning, fontSize: 15, fontWeight: "600" }}>
-          Речь не работает: порт {data.proxy.port} не занят плагином
+          {tr.t("app.portDown", { port: data.proxy.port })}
         </Text>
         <Text style={{ color: theme.colors.foregroundMuted, fontSize: 13, lineHeight: 18 }}>
-          {data.proxy.error
-            ? `Не удалось встать на порт: ${data.proxy.error}`
-            : "Локальный сервер не поднялся."}{" "}
-          Обычно это проходит само за пару секунд, и плагин полминуты пробует снова. Если
-          дошло до этого сообщения — порт держит кто-то посторонний.
+          {data.proxy.error ? tr.t("app.portError", { error: tr.say(data.proxy.error) }) : tr.t("app.serverDown")}{" "}
+          {tr.t("app.portAdvice")}
         </Text>
         <Pressable
           onPress={() => restarting.mutate()}
@@ -493,7 +504,7 @@ export function VoiceSurface({ theme, layout }: PluginSurfaceProps) {
           })}
         >
           <Text style={{ color: theme.colors.accentForeground, fontSize: 14, fontWeight: "600" }}>
-            {restarting.isPending ? "Поднимаю…" : "Поднять заново"}
+            {restarting.isPending ? tr.t("app.restarting") : tr.t("app.restart")}
           </Text>
         </Pressable>
       </View>
@@ -539,7 +550,7 @@ export function VoiceSurface({ theme, layout }: PluginSurfaceProps) {
               }}
             >
               <Icon name={section.icon} size={18} color={theme.colors.foregroundMuted} />
-              <Text style={{ color: theme.colors.foreground, fontSize: 15, flex: 1 }}>{section.title}</Text>
+              <Text style={{ color: theme.colors.foreground, fontSize: 15, flex: 1 }}>{tr.t(section.title)}</Text>
               <Text style={{ color: colour, fontSize: 13 }} numberOfLines={1}>
                 {summary.text}
               </Text>
@@ -569,11 +580,11 @@ export function VoiceSurface({ theme, layout }: PluginSurfaceProps) {
         <Pressable onPress={() => setOpen(null)} style={{ marginBottom: 14 }}>
           <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
             <Text style={{ color: theme.colors.accent, fontSize: 17 }}>‹</Text>
-            <Text style={{ color: theme.colors.accent, fontSize: 15 }}>Всё</Text>
+            <Text style={{ color: theme.colors.accent, fontSize: 15 }}>{tr.t("app.back")}</Text>
           </View>
         </Pressable>
         <Text style={{ color: theme.colors.foreground, fontSize: 22, fontWeight: "700", marginBottom: 16 }}>
-          {current.title}
+          {tr.t(current.title)}
         </Text>
         {current.Component(lab)}
       </ScrollView>
@@ -586,13 +597,15 @@ export function VoiceSurface({ theme, layout }: PluginSurfaceProps) {
         style={{ width: 268, borderRightWidth: 1, borderRightColor: theme.colors.border }}
         contentContainerStyle={{ padding: 16 }}
       >
-        <Text style={{ color: theme.colors.foreground, fontSize: 19, fontWeight: "700", marginBottom: 14 }}>Голос</Text>
+        <Text style={{ color: theme.colors.foreground, fontSize: 19, fontWeight: "700", marginBottom: 14 }}>
+          {tr.t("app.title")}
+        </Text>
         {alarm}
         {index}
       </ScrollView>
       <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 24, paddingBottom: 48, maxWidth: WIDE_ENOUGH }}>
         <Text style={{ color: theme.colors.foreground, fontSize: 22, fontWeight: "700", marginBottom: 18 }}>
-          {current?.title}
+          {current ? tr.t(current.title) : null}
         </Text>
         {current?.Component(lab)}
       </ScrollView>

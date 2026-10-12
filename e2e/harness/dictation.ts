@@ -76,11 +76,11 @@ export async function openDictation(options: { timeline: Timeline; daemon?: Test
      * Says `text` into a dictation at the speed of speech, then stops and waits for the
      * transcript, as a tap on the tick does. `ms` is how long that wait was.
      */
-    async dictate(text: string): Promise<{ transcript: string; ms: number }> {
+    async dictate(text: string, options: { voice?: string } = {}): Promise<{ transcript: string; ms: number }> {
       const sender = new DictationStreamSender({ client: seen, format: PCM_FORMAT, createDictationId: randomUUID });
       try {
         await sender.restartStream("start");
-        const speech = Buffer.concat([await synthesize(text), roomTone(16_000)]);
+        const speech = Buffer.concat([await synthesize(text, options.voice), roomTone(16_000)]);
         timeline.note("person.dictates", text);
         for (let at = 0; at < speech.length; at += SEGMENT_BYTES) {
           sender.enqueueSegment(speech.subarray(at, at + SEGMENT_BYTES).toString("base64"));

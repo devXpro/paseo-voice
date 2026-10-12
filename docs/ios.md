@@ -84,7 +84,7 @@ compile — see [e2e.md](e2e.md#trying-a-fix-before-it-ships).
   only when its corrections that do it are loaded in the daemon running now; otherwise
   — the web, no plugin, an older one, an unpatched daemon, an encoder that fails — the
   microphone goes as PCM, as upstream sends it. See
-  [patches.md](patches.md#голос-с-телефона-в-opus).
+  [patches.md](patches.md#the-phones-voice-in-opus).
 - **The test pinning the old tone's length** is skipped, or it fails the build.
 - **The bundle identifier** becomes `sh.paseo.debug.<team>`. Plain `sh.paseo.debug` is
   already registered to Paseo's own team and cannot be claimed.

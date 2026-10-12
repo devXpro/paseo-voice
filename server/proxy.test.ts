@@ -37,6 +37,7 @@ async function withProxy(
   rate = 1,
   steady = false,
   encodeMp3?: (pcm: Buffer) => Promise<Buffer>,
+  speechLocale = "ru-RU",
 ): Promise<void> {
   const seen: Record<string, unknown>[] = [];
   const lines: string[] = [];
@@ -53,7 +54,7 @@ async function withProxy(
       provider: "local",
       voice: "aiden",
       model: "1.7b-customvoice",
-      language: "russian",
+      speechLocale,
       rate,
       steady,
       // Off in these tests: the filter is verified on its own, and leaving it on
@@ -236,7 +237,8 @@ test("the chosen speaker and rate reach the engine", async () => {
     async (url, seen) => {
       await speak(url, "Привет.");
       assert.equal(seen[0]?.speaker, "aiden");
-      assert.equal(seen[0]?.language, "russian");
+      // By the engine's own name for it, not Google's accent and not Whisper's code.
+      assert.equal(seen[0]?.language, "Russian");
       assert.equal(seen[0]?.text, "Привет.");
       // Paseo can only ever send `alloy`; the point of this proxy is that it does not
       // reach the engine, which would answer `unknown speaker`.
@@ -287,4 +289,110 @@ test("empty input is refused before the engine is touched", async () => {
       assert.equal(seen.length, 0);
     },
   );
+});
+
+test("each language reaches the local engine by the engine's own name for it", async () => {
+  for (const [locale, name] of [["es-US", "Spanish"], ["pt-PT", "Portuguese"], ["en-IN", "English"], ["de-DE", "German"]]) {
+    await withProxy(
+      (_body, response) => {
+        response.writeHead(200, { "content-type": "audio/pcm" });
+        response.end(pcm(new Array(24 * 100).fill(5000)));
+      },
+      async (url, seen) => {
+        assert.equal((await speak(url, "Hola.")).status, 200);
+        assert.equal(seen[0]?.language, name, locale);
+      },
+      1,
+      false,
+      undefined,
+      locale,
+    );
+  }
+});
+
+test("Ukrainian is refused before the local engine is touched, and says why", async () => {
+  // The engine knows ten languages and not this one; asked anyway, it reads Ukrainian
+  // with a guess at another language's sounds, and nobody would call that speech.
+  await withProxy(
+    (_body, response) => {
+      response.writeHead(200, { "content-type": "audio/pcm" });
+      response.end(pcm(new Array(24 * 100).fill(5000)));
+    },
+    async (url, seen) => {
+      const reply = await speak(url, "Привіт.");
+      assert.equal(reply.status, 503);
+      assert.match(await reply.text(), /Ukrainian/);
+      assert.equal(seen.length, 0);
+    },
+    1,
+    false,
+    undefined,
+    "uk-UA",
+  );
+});
+
+/** A stand-in `whisper-server`: records each dictated chunk's form fields. */
+async function fakeRecogniser(): Promise<{ port: number; forms: Record<string, string>[]; close(): Promise<void> }> {
+  const forms: Record<string, string>[] = [];
+  const server: Server = createServer((request, response) => {
+    const chunks: Buffer[] = [];
+    request.on("data", (chunk: Buffer) => chunks.push(chunk));
+    request.on("end", async () => {
+      // Typed by hand, as in the proxy itself: without the DOM's iterable typings the
+      // ambient `FormData` lacks the methods this object has at runtime.
+      const form = (await new Request("http://local/", {
+        method: "POST",
+        headers: { "content-type": request.headers["content-type"] ?? "" },
+        body: Buffer.concat(chunks),
+      }).formData()) as unknown as { forEach(each: (value: unknown, name: string) => void): void };
+      const fields: Record<string, string> = {};
+      form.forEach((value, name) => {
+        fields[name] = typeof value === "string" ? value : "<file>";
+      });
+      forms.push(fields);
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({ text: "ok" }));
+    });
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const port = (server.address() as { port: number }).port;
+  return { port, forms, close: () => new Promise<void>((resolve) => server.close(() => resolve())) };
+}
+
+test("dictation is forced to the chosen language and given that language's words", async () => {
+  const recogniser = await fakeRecogniser();
+  const proxy = createProxy({
+    port: 0,
+    engine: stubEngine(1),
+    choice: () => ({
+      provider: "google",
+      voice: "pt-BR-Chirp3-HD-Orus",
+      model: "",
+      speechLocale: "pt-BR",
+      rate: 1,
+      steady: false,
+      cue: "lobby-time",
+      cueVolume: 1,
+      phoneSafe: false,
+      dictionary: "Supabase, Kubernetes",
+      googleKey: "",
+      pronunciations: [],
+    }),
+    recogniser: () => ({ port: recogniser.port, running: true }),
+  });
+  await proxy.start();
+  try {
+    // What Paseo sends: its own instruction as the prompt, and its own idea of the language.
+    const form = new FormData();
+    form.set("file", new Blob([Buffer.alloc(64)], { type: "audio/wav" }), "chunk.wav");
+    form.set("prompt", "Transcribe only what the speaker says. Do not add words.");
+    form.set("language", "en");
+    const reply = await fetch(`http://127.0.0.1:${proxy.port}/v1/audio/transcriptions`, { method: "POST", body: form });
+    assert.equal(reply.status, 200);
+    assert.equal(recogniser.forms[0]?.language, "pt");
+    assert.equal(recogniser.forms[0]?.prompt, "Supabase, Kubernetes");
+  } finally {
+    await proxy.stop();
+    await recogniser.close();
+  }
 });

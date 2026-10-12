@@ -30,7 +30,7 @@ patched Paseo checkout, and for the live run a daemon, a relay and a Claude logi
   build:app-deps` inside it, which `build.sh` does — so the harness connects with the
   same client the phone build will carry.
 - **For the live run**, a directory where `claude` is logged in, for the test agent to
-  work in. See [The live run](#the-live-run).
+  work in, with no personal instructions — see [The live run](#the-live-run).
 
 ## How it is put together
 
@@ -184,6 +184,35 @@ PASEO_VOICE_E2E_CWD=/path/to/a/folder/claude/is/logged/in/for
 Without a working login the agent answers in text that authentication failed, ends its
 turn within a second and never speaks — the timeline shows exactly that line.
 
+**The agent must have no personal instructions.** A CLAUDE.md that says "answer in
+Russian" answers every question of the language suite in Russian, and the suite measures
+that instead of this plugin. So a test daemon gives its agents none: it starts with
+`CLAUDE_CODE_DISABLE_CLAUDE_MDS=1` — Claude Code reads a CLAUDE.md from every directory
+above the agent's, `~/.claude/CLAUDE.md` included whatever the profile — and without the
+runner's `CLAUDE_CONFIG_DIR`, as the app starts the real daemon: run from inside a Claude
+session, the suite would otherwise hand that session's profile to every test agent. Where
+profiles are picked per directory, a `.claude-data` of its own inside the test agent's
+folder is the one it logs in with: log in there once.
+
+### Every language
+
+`e2e/live/languages.live.ts` holds one conversation per language, on a daemon of the
+suite's own and a proxy built in the test, switched to one language at a time:
+
+- the person asks a question aloud, in a Google voice of that accent;
+- the daemon must have heard it, the agent must answer it aloud in the same language,
+  every sentence must play to the end, and silence must follow;
+- **then the answer is listened back**: what reached the speaker goes through Whisper
+  with the language left for it to detect — a recogniser of the suite's own, started
+  without a dictionary, since a hint in one language pulls every other towards it.
+  It is the one check a timeline cannot make: which language the speaker actually spoke;
+- then a sentence is dictated, and most of its words must come back;
+- and the local engine reads each of its six languages, listened back the same way, and
+  refuses Ukrainian with a reason.
+
+The audio goes as PCM, so it can be listened back without a decoder. A run takes a
+minute or two per language.
+
 ### A daemon of the tests' own
 
 `e2e/live/listening.live.ts` does not run on the daemon everybody's sessions run under.
@@ -237,7 +266,7 @@ The same file has the local engine on a Mac with nothing to make MP3 with: this 
 proxy, its own code, started in the test with no encoder, in front of a test daemon that
 asks for MP3. The engine is the only stand-in — it answers with this plugin's voice as
 PCM — and the test states that the PCM reaches the phone labelled as PCM and plays to the
-end, which takes the correction **Локальный движок без MP3** in the daemon.
+end, which takes the correction **Local engine without MP3** in the daemon.
 
 `PASEO_VOICE_E2E_CODEC` sets how the phone sends its microphone for a whole run —
 `opus`, `pcm`, or `plugin` to ask this plugin as the phone does — so the older suites
@@ -339,7 +368,7 @@ The same order, with the test daemon in place of a rebuild:
    files in memory: the anchors have to fit, the result has to fit the original's size,
    and `node --check` has to accept it — a daemon that cannot parse a module does not
    start.
-4. **Write it into the archive** — **Наложить**, or `apply()` from a script. The real
+4. **Write it into the archive** — **Apply**, or `apply()` from a script. The real
    daemon is unaffected; it already has its code in memory.
 5. **Green on a fresh test daemon**, which every live test file starts for itself, then
    `PASEO_VOICE_E2E_DAEMON=isolated npm run e2e:live` for everything else.

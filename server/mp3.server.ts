@@ -119,7 +119,7 @@ export function canEncodeMp3(): boolean {
 export function encodeMp3(pcm: Buffer, rate = 24_000, kbps = MP3_KBPS): Promise<Buffer> {
   const found = encoder(rate, kbps);
   if (!found) {
-    return Promise.reject(new Error("для MP3 нужен lame или ffmpeg: brew install lame"));
+    return Promise.reject(new Error("MP3 needs lame or ffmpeg: brew install lame"));
   }
   return new Promise((resolve, reject) => {
     const child = spawn(found.command, found.args, { stdio: ["pipe", "pipe", "pipe"] });

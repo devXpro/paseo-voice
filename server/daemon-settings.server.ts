@@ -2,6 +2,7 @@ import { execFile, spawn } from "node:child_process";
 import { readFile, rename, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
+import { msg } from "../shared/i18n/index.ts";
 
 /**
  * Two settings in the daemon's own config decide whether voice mode can answer at all.
@@ -28,7 +29,7 @@ export const DEFAULT_PROMPT = [
   "",
   "Speak prose, not machinery. Shell commands, code, file paths, identifiers, tool output,",
   "tables and log lines are never spoken aloud — say what they mean in a sentence instead",
-  '("запускаю тесты", "три из сорока упали") and leave the literal text in the chat where it',
+  '("running the tests", "three of forty failed") and leave the literal text in the chat where it',
   "can be read. Outside voice mode this instruction does not apply and the speak tool is absent.",
   "",
   "Finishing is always said aloud, however small the thing was: one short sentence naming",
@@ -141,7 +142,7 @@ function without(appended: string, ...ours: string[]): string {
 export function reloadDaemon(): Promise<string> {
   const cli = process.env.PASEO_CLI;
   if (!cli) {
-    return Promise.reject(new Error("PASEO_CLI не задан — не могу попросить демон перечитать конфиг"));
+    return Promise.reject(new Error(msg("daemon.noCliReload")));
   }
   return new Promise((resolve, reject) => {
     execFile(cli, ["reload"], { timeout: 20_000 }, (error, stdout, stderr) =>
@@ -159,7 +160,7 @@ export function reloadDaemon(): Promise<string> {
  */
 export function restartDaemon(logFile: string): void {
   if (!process.env.PASEO_CLI) {
-    throw new Error("PASEO_CLI не задан — не могу перезапустить демон");
+    throw new Error(msg("daemon.noCliRestart"));
   }
   spawn("/bin/sh", ["-c", '"$PASEO_CLI" restart --json >"$1" 2>&1 &', "sh", logFile], {
     detached: true,

@@ -4,6 +4,7 @@ import { mkdir, rename, rm, stat } from "node:fs/promises";
 import path from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
+import { msg } from "../shared/i18n/index.ts";
 import { paths } from "./paths.server.ts";
 
 /**
@@ -35,21 +36,21 @@ export const MODELS = [
   {
     id: "large-v3-turbo-q8_0",
     title: "Large v3 Turbo · q8",
-    note: "лучшее соотношение: вдвое легче полной, качество то же",
+    note: "the best balance: half the size of the full one, the same quality",
     file: "ggml-large-v3-turbo-q8_0.bin",
     bytes: 874_188_075,
   },
   {
     id: "large-v3-turbo-q5_0",
     title: "Large v3 Turbo · q5",
-    note: "вдвое легче предыдущей, на технических терминах чуть слабее",
+    note: "half the size again, a little weaker on technical terms",
     file: "ggml-large-v3-turbo-q5_0.bin",
     bytes: 573_849_419,
   },
   {
     id: "large-v3-turbo",
     title: "Large v3 Turbo",
-    note: "полная, без потерь — берите, если места не жалко",
+    note: "the full one, nothing lost — take it if space is no issue",
     file: "ggml-large-v3-turbo.bin",
     bytes: 1_624_555_275,
   },
@@ -114,7 +115,7 @@ export function installEngine(log: (line: string) => void = () => {}): Promise<v
   return new Promise((resolve, reject) => {
     const brew = ["/opt/homebrew/bin/brew", "/usr/local/bin/brew"].find((one) => existsSync(one));
     if (!brew) {
-      reject(new Error("Homebrew не найден. Поставь его с brew.sh, потом нажми ещё раз."));
+      reject(new Error(msg("whisper.noHomebrew")));
       return;
     }
     log("voice: brew install whisper-cpp");
@@ -140,7 +141,7 @@ export async function fetchModel(
 ): Promise<void> {
   const model = modelOf(id);
   if (!model) {
-    throw new Error(`неизвестная модель ${id}`);
+    throw new Error(msg("whisper.unknownModel", { id }));
   }
   await mkdir(modelDir, { recursive: true });
   const target = modelPath(model.file);
@@ -148,7 +149,7 @@ export async function fetchModel(
 
   const response = await fetch(sourceOf(model.file), { signal: AbortSignal.timeout(60 * 60_000) });
   if (!response.ok || !response.body) {
-    throw new Error(`не скачалось: ${response.status}`);
+    throw new Error(msg("whisper.downloadFailed", { status: response.status }));
   }
   const total = Number(response.headers.get("content-length")) || model.bytes;
   let done = 0;
@@ -184,12 +185,29 @@ export type Recogniser = {
  * Kept warm once started: loading the weights takes seconds and a cold start on every
  * dictated sentence would be worse than the English-only recogniser this replaces.
  */
-export function createRecogniser(options: { port: number; log?: (line: string) => void }): Recogniser {
-  const { port, log = () => {} } = options;
+export function createRecogniser(options: {
+  port: number;
+  log?: (line: string) => void;
+  /** Where the binary is; a test hands it a stand-in. */
+  engine?: () => Promise<string>;
+}): Recogniser {
+  const { port, log = () => {}, engine = enginePath } = options;
   let child: ChildProcess | null = null;
   let loaded = "";
   let hint = "";
+  let tongue = "";
   let failure = "";
+  /**
+   * The process being replaced, until it has gone. It holds the port while it shuts
+   * down, so its successor waits for it rather than failing to bind.
+   */
+  let leaving: Promise<void> = Promise.resolve();
+  /**
+   * Moved on by every stop, and every start begins with one. A start that finds it moved
+   * once its waiting is over has been overtaken — by a later start, which reports for
+   * both, or by a stop — and steps aside instead of starting a process of its own.
+   */
+  let generation = 0;
 
   async function alive(): Promise<boolean> {
     try {
@@ -202,59 +220,97 @@ export function createRecogniser(options: { port: number; log?: (line: string) =
 
   return {
     port,
-    running: () => child !== null && !child.killed,
+    running: () => child !== null && child.exitCode === null && child.signalCode === null,
     loaded: () => loaded,
     lastError: () => failure,
     stop() {
-      child?.kill();
+      generation += 1;
+      const old = child;
       child = null;
       loaded = "";
+      if (old && old.exitCode === null && old.signalCode === null) {
+        leaving = new Promise<void>((gone) => {
+          // Told once; made to go if it has not after a few seconds.
+          const force = setTimeout(() => old.kill("SIGKILL"), 3_000);
+          force.unref?.();
+          old.once("exit", () => {
+            clearTimeout(force);
+            gone();
+          });
+        });
+        old.kill();
+      }
     },
     async ensure(id, language, prompt) {
       // The vocabulary hint is given at startup rather than per request: whisper-server
       // takes it either way, but injecting a field means rebuilding the multipart body
       // of every dictated sentence, and the engine comes back in under a second.
-      if (child && loaded === id && hint === prompt && !child.killed) {
+      // The language too: it is the default for any request that does not name one.
+      if (child && loaded === id && hint === prompt && tongue === language && !child.killed) {
         return;
       }
       this.stop();
+      const turn = generation;
       const model = modelOf(id);
       if (!model) {
-        throw new Error(`неизвестная модель ${id}`);
+        throw new Error(msg("whisper.unknownModel", { id }));
       }
       if ((await installedBytes(id)) === 0) {
-        throw new Error("модель не скачана");
+        throw new Error(msg("whisper.notDownloaded"));
       }
-      const binary = await enginePath();
+      const binary = await engine();
       if (!binary) {
-        throw new Error("whisper-server не установлен");
+        throw new Error(msg("whisper.notInstalled"));
+      }
+      // Two fewer than the cores, so dictating does not make everything else stutter.
+      const threads = Math.max(2, (await cores()) - 2);
+      await leaving;
+      // From this check to `child = started` nothing may wait: two starts that both got
+      // past it used to both start, and the one that lost the port left the other running
+      // unknown to the plugin.
+      if (turn !== generation) {
+        return;
       }
       failure = "";
-      child = spawn(
+      const started = spawn(
         binary,
         [
           "--model", modelPath(model.file),
           "--host", "127.0.0.1",
           "--port", String(port),
           "--language", language,
-          // Two fewer than the cores, so dictating does not make everything else stutter.
-          "--threads", String(Math.max(2, (await cores()) - 2)),
+          // Each request on its own. Without this the server keeps every earlier
+          // transcript as context for the next, and Whisper continues in the language of
+          // that context whatever language it is told: after one English sentence,
+          // Spanish, French, German and Russian all came back translated into English.
+          // Only the past goes; the dictionary prompt is still given to every request.
+          "--no-context",
+          "--threads", String(threads),
           // Words it should expect to hear. Whisper leans on this when a sound could
           // be either of two words, which is most of what goes wrong with jargon.
           ...(prompt.trim() ? ["--prompt", prompt.trim()] : []),
         ],
         { stdio: ["ignore", "pipe", "pipe"] },
       );
-      child.stderr?.on("data", (chunk: Buffer) => {
+      child = started;
+      // whisper-server writes its whole log to stderr, so a line there is no failure while
+      // it runs — the panel used to show "whisper_init_state: compute buffer…" as one.
+      // When it ends on its own, the last line is what says why.
+      let said = "";
+      started.stderr?.on("data", (chunk: Buffer) => {
         const line = chunk.toString("utf8").trim();
         if (line) {
-          failure = line.split("\n").slice(-1)[0] ?? "";
+          said = line.split("\n").slice(-1)[0] ?? "";
         }
       });
-      child.once("exit", (code) => {
-        if (code !== 0 && code !== null) {
-          failure ||= `движок вышел с кодом ${code}`;
+      // Only the one in charge may clear the books. A process being replaced ends after its
+      // successor has started, and its exit used to clear them regardless — which is how a
+      // language change left a recogniser running that the plugin no longer knew of.
+      started.once("exit", (code, signal) => {
+        if (child !== started) {
+          return;
         }
+        failure = said || msg("whisper.exited", { code: code ?? signal ?? "" });
         child = null;
         loaded = "";
       });
@@ -262,19 +318,29 @@ export function createRecogniser(options: { port: number; log?: (line: string) =
       // Loading the weights takes a few seconds; the first request must not race it.
       const deadline = Date.now() + 90_000;
       while (Date.now() < deadline) {
-        if (await alive()) {
+        const up = await alive();
+        // A later call, or a stop, has taken over; it reports for both.
+        if (turn !== generation) {
+          return;
+        }
+        // Gone on its own: the start failed, whatever may be answering on the port.
+        if (started.exitCode !== null || started.signalCode !== null) {
+          throw new Error(failure || msg("whisper.didNotStart"));
+        }
+        if (up) {
           loaded = id;
           hint = prompt;
+          tongue = language;
           log(`voice: whisper on 127.0.0.1:${port}, ${model.title}`);
           return;
         }
-        if (!child) {
-          throw new Error(failure || "движок не поднялся");
-        }
         await new Promise((wake) => setTimeout(wake, 400));
       }
+      if (turn !== generation) {
+        return;
+      }
       this.stop();
-      throw new Error("движок не ответил за 90 секунд");
+      throw new Error(msg("whisper.noAnswer"));
     },
   };
 }

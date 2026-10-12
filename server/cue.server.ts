@@ -5,6 +5,7 @@ import path from "node:path";
 import { ATTRIBUTION, type Builtin, BUILTIN, builtinOf } from "./catalogue.server.ts";
 import { type Track } from "./music.server.ts";
 import { paths } from "./paths.server.ts";
+import { msg } from "../shared/i18n/index.ts";
 
 /**
  * The loop that plays on the phone while the agent is thinking.
@@ -77,7 +78,7 @@ export async function list(): Promise<Cue[]> {
   }
 
   return [...builtin, ...own.sort((a, b) => a.title.localeCompare(b.title, "ru")),
-    { id: "silence", title: "Без звука", kind: "silence", seconds: 0 }];
+    { id: "silence", title: "No sound", kind: "silence", seconds: 0 }];
 }
 
 /** Where a shipped track lives once fetched; the name is the id, so it is stable. */
@@ -106,7 +107,7 @@ export async function fetchBuiltin(entry: Builtin, backoffMs = 1_000): Promise<B
       const bytes = Buffer.from(await response.arrayBuffer());
       const got = createHash("sha256").update(bytes).digest("hex");
       if (got !== entry.sha256) {
-        throw new Error(`контрольная сумма не сошлась на ${bytes.length} байтах`);
+        throw new Error(msg("cueError.checksum", { bytes: bytes.length }));
       }
       return bytes;
     } catch (failure) {
@@ -116,7 +117,7 @@ export async function fetchBuiltin(entry: Builtin, backoffMs = 1_000): Promise<B
       }
     }
   }
-  throw new Error(`${entry.title}: не скачалось за ${ATTEMPTS} попытки — ${last}`);
+  throw new Error(msg("cueError.download", { title: entry.title, attempts: ATTEMPTS, last: String(last) }));
 }
 
 /**
@@ -127,7 +128,7 @@ export async function fetchBuiltin(entry: Builtin, backoffMs = 1_000): Promise<B
 async function ensureBuiltin(id: string): Promise<string> {
   const entry = builtinOf(id);
   if (!entry) {
-    throw new Error(`неизвестный звук ${id}`);
+    throw new Error(msg("cueError.unknown", { id }));
   }
   const target = sourceOf(id);
   try {
@@ -171,7 +172,7 @@ async function samplesOf(wav: string): Promise<Buffer> {
     }
     at += 8 + size + (size % 2);
   }
-  throw new Error("в файле нет звуковых данных");
+  throw new Error(msg("cueError.noAudio"));
 }
 
 /**

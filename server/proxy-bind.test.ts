@@ -7,7 +7,7 @@ const CHOICE = {
   provider: "google" as const,
   voice: "ru-RU-Standard-A",
   model: "",
-  language: "russian",
+  speechLocale: "ru-RU",
   rate: 1,
   steady: true,
   cue: "silence",

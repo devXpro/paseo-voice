@@ -1,4 +1,5 @@
 import { createServer, request as createRequest, type Server } from "node:http";
+import { speechLanguageOf } from "../shared/languages.shared.ts";
 import type { Engine } from "./engine.server.ts";
 import { type Pronunciation, speak as speakWithGoogle, tierOf } from "./google.server.ts";
 import { render as renderCue } from "./cue.server.ts";
@@ -16,7 +17,8 @@ export type Choice = {
   /** Google voice name, or the local engine's speaker, depending on `provider`. */
   voice: string;
   model: string;
-  language: string;
+  /** The accent speech and dictation are in, as Google names it: `es-ES`. */
+  speechLocale: string;
   rate: number;
   steady: boolean;
   /** The waiting cue the patched desktop client asks for, and how loud. */
@@ -24,7 +26,7 @@ export type Choice = {
   cueVolume: number;
   /** Low-pass before sending, so the phone's resampler has nothing to alias. */
   phoneSafe: boolean;
-  /** Words the recogniser should expect, put where Paseo's own instruction was. */
+  /** Words the recogniser should expect, in that language, put where Paseo's own instruction was. */
   dictionary?: string;
   googleKey: string;
   pronunciations: Pronunciation[];
@@ -70,6 +72,10 @@ const BIND_BACKOFF_MS = 1_500;
 /** Overridable so a test can prove the giving-up path without sitting through it. */
 export type BindPatience = { attempts?: number; backoffMs?: number };
 
+/** The language's name in English, for messages meant for the daemon's log. */
+const languageName = (locale: string): string =>
+  new Intl.DisplayNames(["en"], { type: "language" }).of(speechLanguageOf(locale).id) ?? locale;
+
 function readBody(request: import("node:http").IncomingMessage): Promise<string> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
@@ -110,7 +116,8 @@ export function createProxy(options: ProxyOptions): Proxy {
       body: JSON.stringify({
         speaker: at.voice,
         text,
-        language: at.language,
+        // By its own name for the language; `handleSpeak` has refused the ones it lacks.
+        language: speechLanguageOf(at.speechLocale).engine,
         rate: at.rate,
         // Pinning these is what keeps one answer sounding like one person: Paseo sends
         // each sentence separately and the engine otherwise seeds itself from the clock.
@@ -118,7 +125,7 @@ export function createProxy(options: ProxyOptions): Proxy {
       }),
     });
     if (!upstream.ok || !upstream.body) {
-      throw new Error(`движок: ${upstream.status} ${(await upstream.text().catch(() => "")).slice(0, 200)}`.trim());
+      throw new Error(`engine: ${upstream.status} ${(await upstream.text().catch(() => "")).slice(0, 200)}`.trim());
     }
     const chunks: Buffer[] = [];
     const reader = upstream.body.getReader();
@@ -213,7 +220,7 @@ export function createProxy(options: ProxyOptions): Proxy {
   ): Promise<void> {
     const at = recogniser?.();
     if (!at?.running) {
-      refuse(response, 503, "движок распознавания не запущен");
+      refuse(response, 503, "the plugin's recogniser is not running");
       return;
     }
 
@@ -239,7 +246,7 @@ export function createProxy(options: ProxyOptions): Proxy {
     if (at2.dictionary?.trim()) {
       form.set("prompt", at2.dictionary.trim());
     }
-    form.set("language", at2.language === "russian" ? "ru" : "en");
+    form.set("language", speechLanguageOf(at2.speechLocale).whisper);
 
     // Cast because this project compiles without the DOM library, where `FormData` and
     // `fetch`'s body type come from different declarations of the same runtime object.
@@ -278,11 +285,17 @@ export function createProxy(options: ProxyOptions): Proxy {
 
     const at = choice();
     if (!at.voice) {
-      refuse(response, 503, "голос не выбран в плагине");
+      refuse(response, 503, "no voice chosen in the plugin");
       return;
     }
     if (at.provider === "google" && !at.googleKey) {
-      refuse(response, 503, "нет ключа Google");
+      refuse(response, 503, "no Google key in the plugin");
+      return;
+    }
+    if (at.provider === "local" && !speechLanguageOf(at.speechLocale).engine) {
+      // Asked anyway, the engine reads the text with a guess at another language's
+      // sounds. Refused here, the reason reaches the daemon's log instead of a garble.
+      refuse(response, 503, `the local engine cannot speak ${languageName(at.speechLocale)}; choose Google in the plugin`);
       return;
     }
 
@@ -311,7 +324,7 @@ export function createProxy(options: ProxyOptions): Proxy {
     const { audio, format } = made;
     if (audio.length === 0) {
       log(`voice: ${at.provider} returned no audio for ${input.length} chars`);
-      refuse(response, 502, "синтез вернул пустой звук");
+      refuse(response, 502, "synthesis returned no audio");
       return;
     }
 

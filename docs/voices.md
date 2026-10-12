@@ -1,10 +1,51 @@
 # Voices and delivery
 
-Everything under **Голос**, and what each control actually changes.
+Everything under **Voice**, and what each control actually changes.
+
+## Languages and accents
+
+Seven languages, chosen with their accent under **Language**, apart from the language the
+panel itself is in:
+
+| Language | Google accents | Chirp 3 HD voices | Local engine | Characters per hour |
+|---|---|---|---|---|
+| English | en-US, en-GB, en-AU, en-IN | 30 per accent | ✅ | 65 000 |
+| Español | es-ES, es-US | 30 per accent | ✅ | 61 000 |
+| Français | fr-FR, fr-CA | 30 per accent | ✅ | 69 000 |
+| Português | pt-BR, pt-PT | 30 for pt-BR; pt-PT has Standard and WaveNet only | ✅ | 53 000 |
+| Deutsch | de-DE | 30 | ✅ | 63 000 |
+| Русский | ru-RU | 8 | ✅ | 51 000 |
+| Українська | uk-UA | 30 | — | 51 000 |
+
+**One choice drives everything.** The voice switches to the one last chosen for that
+accent, or the first time to the accent's default — Orus, which every accent with
+Chirp 3 HD has. Dictation listens for the language with that language's own dictionary,
+and the allowance estimate uses its speaking rate. Paseo's own recogniser in voice mode,
+Parakeet v3, needs no telling: it detects the language of what it hears among
+twenty-five European ones.
+
+**Changing it never restarts Paseo.** Nothing in Paseo's config depends on it; only
+the plugin's own dictation engine restarts, which takes a second. One engine at a time:
+the new one waits for the old one to let go of the port, and a change made before the
+last one is up takes its place rather than starting beside it.
+
+**Each dictated sentence is heard on its own.** The engine runs with `--no-context`:
+given the sentences before as context, Whisper carries on in their language whatever
+it is told — after one English sentence, Spanish, French, German and Russian all came
+back translated into English. The dictionary still goes with every sentence.
+
+**An accent's voices are its own.** Asked for `fr-CA`, Google also lists `fr-FR` voices
+that can read it — with a French accent. The list here keeps only the accent's own.
+
+**Characters per hour** is measured: the same paragraph in each language, read by two
+Chirp 3 HD voices, Orus and Aoede, at tempo 1, averaged. One voice runs as much as a
+fifth faster than another, so it is an estimate, and it is what the hours-left figure
+under **Limits** divides by.
 
 ## Choosing
 
-Three steps, in order: **provider**, then **family**, then **voice**.
+Three steps, in order: **provider**, then **family**, then **voice** — all of them in
+the accent chosen under **Language**.
 
 The family is read from the voice's own name rather than stored beside it —
 `ru-RU-Chirp3-HD-Orus` is Chirp 3 HD because it says so. Nothing can drift out of sync
@@ -27,7 +68,7 @@ either. The panel says so rather than pretending.
 An earlier build served each render over the local network and opened it in the system
 player. It worked, and it was hated: it threw you out of the app every time.
 
-## Темп речи
+## Speaking rate
 
 0.7× to 1.6×, applied per request. Google takes it as `speakingRate`, the local engine
 as `rate`. Neither changes pitch — the voice does not go up as it speeds up.
@@ -35,7 +76,7 @@ as `rate`. Neither changes pitch — the voice does not go up as it speeds up.
 1.0 is the voice as designed. It is not sent at all when it is 1.0, so the default
 path carries no tempo field.
 
-## Ровный тон
+## Steady tone
 
 **Local engine only.** The switch disappears when Google is the provider, because
 Google has no seed to pin and does not vary between takes.
@@ -49,7 +90,7 @@ text produces the same audio every time.
 This is the difference between an answer that sounds like one person talking and one
 that sounds like a set of takes spliced together.
 
-## Чистый звук на телефоне
+## Clean sound on the phone
 
 A low-pass filter at 7.5 kHz, applied to the 24 kHz output before it is sent. On by
 default.

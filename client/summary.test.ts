@@ -27,7 +27,8 @@ const base: Status = {
   rateMax: 1.6,
   steady: true,
   phoneSafe: false,
-  language: "russian",
+  speechLocale: "ru-RU",
+  uiLanguage: "ru",
   proxy: { listening: true, port: 8123, error: "" },
   wired: true,
   restartRequired: false,
@@ -124,4 +125,26 @@ test("a Paseo whose shape changed is reported as such, not as unpatched", () => 
 
 test("a written config the daemon has not re-read yet is not done", () => {
   assert.deepEqual(summarise("paseo", with_({ restartRequired: true })), { text: "нужен перезапуск", tone: "warn" });
+});
+
+test("the index is read in the panel's language, whatever the speech is in", () => {
+  // Russian speech, English panel: the words follow the panel.
+  assert.deepEqual(summarise("voice", with_({ keyPresent: false, uiLanguage: "en" })), { text: "no key", tone: "warn" });
+  assert.deepEqual(summarise("patch", with_({ uiLanguage: "en" })), { text: "applied", tone: "ok" });
+  assert.deepEqual(summarise("voice", with_({ provider: "local", uiLanguage: "en" })), { text: "dylan · local", tone: "ok" });
+});
+
+test("the language line names the speech, in its own language", () => {
+  assert.deepEqual(summarise("language", base), { text: "Русский", tone: "ok" });
+  assert.deepEqual(summarise("language", with_({ speechLocale: "es-US", uiLanguage: "en" })), {
+    text: "Español (EE. UU.)",
+    tone: "ok",
+  });
+});
+
+test("a voice from any accent shows without its locale", () => {
+  assert.deepEqual(summarise("voice", with_({ cloudVoice: "pt-BR-Chirp3-HD-Orus", speechLocale: "pt-BR" })), {
+    text: "Orus",
+    tone: "ok",
+  });
 });

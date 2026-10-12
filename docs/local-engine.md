@@ -10,7 +10,7 @@ cannot work.
 ## What it is
 
 [`gabriele-mastrapasqua/qwen3-tts`](https://github.com/gabriele-mastrapasqua/qwen3-tts)
-at `v0.23.0` — a pure-C Qwen3-TTS runtime, one binary. **Локальный движок** fetches it
+at `v0.23.0` — a pure-C Qwen3-TTS runtime, one binary. **Local engine** fetches it
 from that release into `~/.paseo-voice/bin/qwen_tts` and checksums it.
 
 The model that matters is **Qwen3-TTS-12Hz-1.7B-CustomVoice**, about 4.5 GB. It read
@@ -26,7 +26,7 @@ Started on demand, on `127.0.0.1:8124`, and stopped after ten idle minutes. Choo
 Google as the provider stops it immediately — nothing is listening to it then.
 
 The proxy on `:8123` talks to it over `/v1/tts/stream` and passes the chosen speaker,
-the language, the tempo, and — when **Ровный тон** is on — a pinned seed and
+the language, the tempo, and — when **Steady tone** is on — a pinned seed and
 `top_k: 1`.
 
 ## Why it lost to Google
@@ -35,17 +35,22 @@ the language, the tempo, and — when **Ровный тон** is on — a pinned
 every sentence boundary is a pause while the next one renders. Google synthesises about
 four times faster than real time, and the gaps disappear.
 
-**Voices.** Google has actual Russian speakers. The local model's Russian is
-understandable and clearly not native.
+**Voices.** Google has native speakers in every language here. The local model's
+Russian, measured first, is understandable and clearly not native.
+
+## Languages
+
+Qwen3-TTS knows ten languages: Chinese, English, French, German, Italian, Japanese,
+Korean, Portuguese, Russian and Spanish. Of the seven this plugin offers, that is every
+one but Ukrainian. Choosing Ukrainian while the local engine speaks switches to Google
+and says so; without a Google key the panel warns that voice mode will stay silent.
+The proxy refuses a Ukrainian sentence for the local engine with a reason rather than
+have it read with another language's sounds.
 
 It is still worth keeping for a flight, a dead key, or a month where the allowance ran
 out.
 
 ## Dictation is a separate thing
 
-**Диктовка** only reports whether `ggml-large-v3-turbo.bin` is where `paseo-whisper`
-looks for it — `~/.config/paseo-whisper/models/`. It reports and does nothing else:
-that service has its own configuration and its own restart, and this plugin does not
-reach into them.
-
-Recognition is not what this plugin does. Speech is.
+Recognition is whisper.cpp's `whisper-server`, under **Dictation**, with weights of its
+own in `~/.paseo-voice/models/whisper/`. Nothing here is shared with this engine.

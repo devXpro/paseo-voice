@@ -16,7 +16,7 @@ gcloud services api-keys create --display-name="paseo-voice TTS" \
   --api-target=service=texttospeech.googleapis.com
 ```
 
-Paste it into **Голос → Ключ Google** in the panel. The key is checked against Google
+Paste it into **Voice → Google key** in the panel. The key is checked against Google
 before it is kept, so a bad paste comes back as a message rather than as silence.
 
 ### Where the key lives, and what the panel shows
@@ -66,7 +66,7 @@ The plugin counts the characters it sends, per family, per month, in
 Monitoring and lags by minutes, and the number that matters while choosing a voice is
 the one that is current.
 
-**Лимиты** shows a bar per family: characters spent against the free allowance, and
+**Limits** shows a bar per family: characters spent against the free allowance, and
 what any overspend has cost at that family's price. The reset date is the first of
 next month.
 

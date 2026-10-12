@@ -17,7 +17,7 @@ See [ios.md](ios.md).
 
 ## What is on offer
 
-**Звук ожидания** lists four shipped tracks, everything you have put in
+**Waiting sound** lists four shipped tracks, everything you have put in
 `~/.paseo-voice/music/`, and silence.
 
 | | |

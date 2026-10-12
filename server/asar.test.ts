@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 import { locate, readArchive, readEntry, writeEntry } from "./asar.server.ts";
+import { say } from "../shared/i18n/index.ts";
 
 /**
  * Builds a miniature asar by hand, in the layout Electron actually writes: an outer
@@ -76,7 +77,11 @@ test("a replacement of a different length is refused, not written", async () => 
   const before = await readFile(file);
   const archive = await readArchive(file);
 
-  await assert.rejects(() => writeEntry(file, locate(archive, "one.js")!, Buffer.from("short")), /не совпадает/);
+  // The message travels as a key for the panel to put into words; said in English here.
+  await assert.rejects(
+    () => writeEntry(file, locate(archive, "one.js")!, Buffer.from("short")),
+    (error: Error) => /does not match/.test(say("en", error.message)),
+  );
   // Writing it would shift every following file under a header that still points at the
   // old places — a corrupt archive with no error message.
   assert.deepEqual(await readFile(file), before);
