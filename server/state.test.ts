@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { DEFAULTS, dictionaryOf, parseStored } from "./state.server.ts";
 
-test("a state file from before languages keeps its owner in Russian, interface and speech alike", () => {
+test("a state file from before 0.9 keeps the language it names, for the interface and speech alike", () => {
   const stored = parseStored({ provider: "google", googleVoice: "ru-RU-Chirp3-HD-Orus", language: "russian", dictionary: "Paseo, докер" });
   assert.equal(stored.speechLocale, "ru-RU");
   assert.equal(stored.uiLanguage, "ru");

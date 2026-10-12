@@ -122,7 +122,7 @@ APIs. [google.md](google.md#when-google-refuses) lists the specific errors.
 The language under **Language** picks the voice and what dictation listens for; it does
 not tell the agent what to say. An agent answers in the language it is spoken to,
 unless its instructions say otherwise — and a CLAUDE.md that says "always answer in
-Russian" wins over a Spanish question every time. Then the Spanish voice reads Russian
+German" wins over a Spanish question every time. Then the Spanish voice reads German
 text. Change the instruction, or choose the language the agent actually speaks.
 
 ## Ukrainian is silent on the local engine
@@ -257,9 +257,9 @@ config directory: `~/.claude`, and the one `CLAUDE_CONFIG_DIR` names — which i
 set for your shell and not for the plugin, since Paseo starts it. List any other config
 directories in `~/.paseo-voice/claude-dirs`, one per line.
 
-In any language but Russian it is meant to find few: without a list of a language's
-ordinary words, only what cannot be ordinary speech counts — names, code-shaped words
-and words in another script. Russian has such a list. Add the rest by hand.
+In a language it has no list of ordinary words for, it is meant to find few: only what
+cannot be ordinary speech counts — names, code-shaped words and words in another script.
+So far Russian is the one with such a list. Add the rest by hand.
 
 ## Nothing in the panel reacts
 

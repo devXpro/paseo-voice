@@ -21,7 +21,7 @@ The store one is untouched.
 ```
 
 Twenty to thirty minutes the first time; the checkout and the pods are reused after
-that. The script's output is in English; the panel it builds is in Russian.
+that. The script's output is in English, whatever language the panel is in.
 
 ## Which version it builds
 

@@ -15,7 +15,7 @@ export const ENGINE_REPO = "gabriele-mastrapasqua/qwen3-tts";
 export const ENGINE_RELEASE = "v0.23.0";
 export const ENGINE_ASSET = "qwen_tts-macos-arm64";
 
-/** The one local model worth keeping: it read Russian cleanly where the small one did not. */
+/** The one local model worth keeping: the small one mangles words this one reads cleanly. */
 export const LOCAL_MODEL = {
   id: "1.7b-customvoice",
   repo: "Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice",
@@ -71,8 +71,8 @@ export const whisperModel = z.object({
 /**
  * Dictation, which this plugin now runs rather than reports on.
  *
- * Paseo's built-in recogniser is English-only, so Russian comes back as confident
- * nonsense. The engine here is `whisper-server` — the one part that has to be a native
+ * Paseo's built-in recogniser is English-only, so any other language comes back as
+ * confident nonsense. The engine here is `whisper-server` — the one part that has to be a native
  * binary — and everything around it, including installing it, is the plugin's job.
  */
 export const whisperState = z.object({

@@ -10,8 +10,8 @@ import { paths } from "./paths.server.ts";
 /**
  * Dictation, run by this plugin rather than reported on.
  *
- * Paseo's built-in recogniser is Parakeet, which is English-only, so dictating Russian
- * produces confident nonsense. The seam is the same one the speech side uses: point
+ * Paseo's built-in recogniser is Parakeet, which is English-only, so dictating any
+ * other language produces confident nonsense. The seam is the same one the speech side uses: point
  * `providers.openai.stt.baseUrl` at something local and Paseo will transcribe through
  * it. This is that something.
  *

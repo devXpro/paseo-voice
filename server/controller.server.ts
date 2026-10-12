@@ -664,7 +664,7 @@ export function createController(options: {
      *
      * Reloading the plugin kills the engine but leaves `~/.paseo/config.json` pointing
      * dictation here, so Paseo keeps sending audio to a proxy with nothing behind it
-     * and every dictated word comes back as "движок распознавания не запущен". The
+     * and every dictated word comes back as "the plugin's recogniser is not running". The
      * switch in the panel is for turning the feature on, not for surviving a restart.
      */
     async resumeDictation() {

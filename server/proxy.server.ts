@@ -205,7 +205,7 @@ export function createProxy(options: ProxyOptions): Proxy {
    * so far and continues in its language. So an English instruction makes it answer
    * in English, `language=ru` or not. Long dictation is cut into fifteen-second
    * chunks and each one carries the instruction, which is why some chunks came back
-   * Russian and some English in the same sentence.
+   * in the language spoken and some in English, in the same sentence.
    *
    * The instruction is therefore dropped and this plugin's own vocabulary put in its
    * place, which is what a Whisper prompt is actually for. The language is forced from

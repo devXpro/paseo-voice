@@ -30,7 +30,7 @@ async function setUp(options: Setup) {
     fetchCue: options.pluginCue ? (have) => daemon.fetchCue(have) : undefined,
   });
   daemon.attach(phone);
-  daemon.transcript("привет");
+  daemon.transcript("hello");
   daemon.turn("turn_started");
   return { timeline, daemon, phone };
 }

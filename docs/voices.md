@@ -114,7 +114,7 @@ Implemented as a Blackman-windowed sinc, 127 taps, in `server/pcm.server.ts`.
 
 ## Stress
 
-Russian stress is set through `customPronunciations` on the request — a field carrying
+Stress is set through `customPronunciations` on the request — a field carrying
 IPA, where `ˈ` precedes the stressed syllable and `.` marks syllable boundaries. It
 works on Chirp 3 HD, which otherwise reads SSML tags out loud.
 

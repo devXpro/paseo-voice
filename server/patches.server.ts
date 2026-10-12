@@ -19,7 +19,7 @@ import { msg } from "../shared/i18n/index.ts";
  * at the moment it arrives removes the window entirely.
  *
  * The second is the long gaps. The manager splits on every full stop and never merges,
- * so "Окей, слушай." becomes its own request, its own round trip to the phone, and its
+ * so "Okay, listen." becomes its own request, its own round trip to the phone, and its
  * own second of silence. Merging up to the limit it already defines turns a seven-part
  * answer into two.
  *
@@ -161,9 +161,9 @@ const muteSplices: readonly Splice[] = [
  *
  * Only a phrase goes in now, from the moment the detector confirms it, with the three
  * seconds before. The detector confirms speech after 800 ms of it unbroken, and a short
- * first word with a pause after it — «Так, …», «Слушай, …», «Стоп, хватит» — breaks the
+ * first word with a pause after it — "So, …", "Listen, …", "Stop, enough" — breaks the
  * count: the phrase is then confirmed only on the word after, over two seconds in, and
- * with two seconds kept «Стоп» was lost (measured live). Three cover it.
+ * with two seconds kept "Stop" was lost (measured live). Three cover it.
  */
 const prerollSplices: readonly Splice[] = [
   {

@@ -35,10 +35,10 @@ nonsense, and even in English the voices are a step behind. The only seam for a
 different engine is the OpenAI provider: point `providers.openai.tts.baseUrl` somewhere
 local and Paseo will read through it. This plugin is that somewhere.
 
-It began as a local-only plugin for Russian and still carries that engine. Google won on
-the two things that matter for an assistant reading answers aloud: it has native
-speakers of every language here, and it synthesises four times faster than it speaks,
-so the gaps between sentences disappear.
+Google does the speaking by default, for the two things that matter in an assistant
+reading answers aloud: it has native speakers of every language here, and it
+synthesises four times faster than it speaks, so the gaps between sentences disappear.
+The local engine is there for when there is no key or no network.
 
 ## 🗣️ Languages
 
@@ -110,8 +110,8 @@ sentence came out the same length from Standard and WaveNet voices of the same l
 in 54 pairs of 55 — the odd one out is pt-BR's letter A. Same price per million, but
 Standard carries four times the free allowance — so Standard is the one to ask for.
 
-**Russian stress is set through `customPronunciations`, not through the text.** A combining
-acute (`за́мок`) is read aloud as a character and mangles the word. The right way is a
+**Stress is set through `customPronunciations`, not through the text.** A combining
+acute (`за́мок`, say) is read aloud as a character and mangles the word. The right way is a
 field on the request carrying IPA, where `ˈ` precedes the stressed syllable — and it
 works on Chirp 3 HD, which otherwise reads SSML tags out loud.
 

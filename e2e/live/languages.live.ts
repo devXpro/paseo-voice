@@ -22,9 +22,9 @@ import { createTimeline, type Timeline } from "../harness/timeline.ts";
  * language left for it to detect — because a timeline cannot say which language the
  * speaker actually spoke. Then a sentence is dictated.
  *
- * The agent works in a folder whose Claude profile has no personal instructions: one
- * that says "answer in Russian" would answer every one of these in Russian, and the
- * suite would be measuring that rather than this plugin. See docs/e2e.md.
+ * The agent works with no personal instructions: one that names a language to answer
+ * in would answer every one of these in that language, and the suite would be
+ * measuring that rather than this plugin. See docs/e2e.md.
  *
  * The audio goes as PCM: compression is another suite's business, and raw samples can
  * be listened back without a decoder.

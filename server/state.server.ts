@@ -21,8 +21,8 @@ export type Stored = {
   googleVoice: string;
   /**
    * The voice last chosen for every other accent, so going to Spanish and back gives
-   * back the Russian voice somebody picked rather than the default — which may be a
-   * family billed seven times higher.
+   * back the voice somebody picked rather than the default — which may be a family
+   * billed seven times higher.
    */
   voicesByLocale: Record<string, string>;
   /** The local engine's speaker, used only while the provider is `local`. */
@@ -153,8 +153,8 @@ function dictionariesOf(parsed: Partial<Stored> & Legacy, speechLocale: string):
  * The state file as read, every field checked. Pure, so the migration can be tested
  * without touching the real file.
  *
- * A file that has a `language` but no `speechLocale` predates languages, and back then
- * there was only Russian — speech and panel alike. Its owner keeps both.
+ * A file that has a `language` but no `speechLocale` was written before 0.9, which kept
+ * one language for speech and panel alike. Its owner keeps it for both.
  */
 export function parseStored(raw: unknown): Stored {
   const parsed = (raw && typeof raw === "object" ? raw : {}) as Partial<Stored> & Legacy;

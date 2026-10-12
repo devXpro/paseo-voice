@@ -124,7 +124,7 @@ const phone = await createPhone({
 });
 daemon.attach(phone);
 
-daemon.transcript("привет");           // what the daemon recognised
+daemon.transcript("hello");            // what the daemon recognised
 daemon.turn("turn_started");
 await sleep(1500);                      // the agent thinking
 await daemon.speak([800, 800]);         // one speak call, two sentences
@@ -184,9 +184,9 @@ PASEO_VOICE_E2E_CWD=/path/to/a/folder/claude/is/logged/in/for
 Without a working login the agent answers in text that authentication failed, ends its
 turn within a second and never speaks — the timeline shows exactly that line.
 
-**The agent must have no personal instructions.** A CLAUDE.md that says "answer in
-Russian" answers every question of the language suite in Russian, and the suite measures
-that instead of this plugin. So a test daemon gives its agents none: it starts with
+**The agent must have no personal instructions.** A CLAUDE.md that names a language
+to answer in answers every question of the language suite in that language, and the
+suite measures that instead of this plugin. So a test daemon gives its agents none: it starts with
 `CLAUDE_CODE_DISABLE_CLAUDE_MDS=1` — Claude Code reads a CLAUDE.md from every directory
 above the agent's, `~/.claude/CLAUDE.md` included whatever the profile — and without the
 runner's `CLAUDE_CONFIG_DIR`, as the app starts the real daemon: run from inside a Claude
@@ -290,7 +290,7 @@ port, one utterance at a time — for what a scripted test would not think to tr
 
 ```sh
 node --env-file-if-exists=.env.e2e --import ./e2e/harness/register.ts e2e/tools/dialogue.ts &
-curl -s -X POST --data-binary 'Скажи одно слово: яблоко.' 127.0.0.1:8139/say
+curl -s -X POST --data-binary 'Say one word: apple.' 127.0.0.1:8139/say
 curl -s '127.0.0.1:8139/turn?waitMs=30000'     # how the turn ended, and the timeline of it
 curl -s -X POST --data-binary 'all' 127.0.0.1:8139/allow
 curl -s -X POST 127.0.0.1:8139/close
@@ -309,7 +309,7 @@ Haiku turn and a few hundred characters of Google TTS, an assertion costs nothin
 describe("a question with a long answer", { timeout: 300_000 }, () => {
   let run: Exchange;
   before(async () => {
-    run = await exchange("Расскажи пятью предложениями, зачем нужен голосовой режим.");
+    run = await exchange("Explain in five sentences what voice mode is for.");
   });
   test("the cue never sounds between its sentences", () => {
     assert.deepEqual(run.cueWithinTheAnswer, [], run.timeline.render());

@@ -8,8 +8,8 @@ import { paths } from "./paths.server.ts";
  * The words somebody actually says, mined from their own transcripts.
  *
  * Whisper leans on a vocabulary hint when a sound could be two different words, and
- * that is most of what goes wrong with jargon: `постгрес` comes back as `прогресс`,
- * `докер` as `доктор`. A generic word list does not help, because the problem is
+ * that is most of what goes wrong with jargon: "Postgres" comes back as "progress",
+ * "Docker" as "doctor". A generic word list does not help, because the problem is
  * specific — it is this person's stack, this person's project names.
  *
  * So the list is taken from what they have already typed. Their own messages only:
@@ -105,11 +105,11 @@ const CAPITALS_ARE_NAMES: ReadonlySet<SpeechLanguageId> = new Set(["en", "es", "
 /**
  * The words of one spoken sentence worth a place in the hint.
  *
- * Russian keeps the rule it was built with: Latin words, and Cyrillic ones of four
- * letters or more that are not ordinary speech. Every other language lacks a list of
- * its ordinary words, and without one its own vocabulary would flood the hint — which
- * then biases the recogniser towards those words instead of the rare ones. So there
- * only what cannot be ordinary speech counts: code-shaped words, names (a capital
+ * Russian has a list of its ordinary words, so there the rule is: Latin words, and
+ * Cyrillic ones of four letters or more that are not on it. In a language without such
+ * a list its own vocabulary would flood the hint — which then biases the recogniser
+ * towards those words instead of the rare ones. So there only what cannot be ordinary
+ * speech counts: code-shaped words, names (a capital
  * mid-sentence, where capitals mean that), and words in a script foreign to the
  * language — Latin inside Ukrainian.
  */

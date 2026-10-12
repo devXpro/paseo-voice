@@ -141,7 +141,7 @@ export async function startTestDaemon(options: {
   // the suite — the real daemon, started by the app, has none, and the agent's directory
   // picks one — and without any CLAUDE.md: Claude Code reads one from every directory
   // above the agent's, `~/.claude/CLAUDE.md` included whatever the profile, and one that
-  // said "answer in Russian" answered a Spanish question in Russian.
+  // named a language to answer in answered a Spanish question in that language.
   const { CLAUDE_CONFIG_DIR: _, ...inherited } = process.env;
   const child: ChildProcess = spawn(CLI, ["daemon", "run", "--home", TEST_HOME], {
     // From its own home rather than the repository: whatever a shell started from the

@@ -67,9 +67,9 @@ test("the ledger is kept where the rest of the plugin's state lives", async () =
  * charges for one.
  */
 test("Cyrillic costs what it looks like, and an emoji is one character not two", () => {
-  const russian = "Проверка связи";
-  assert.equal([...russian].length, 14, "кириллица — по одному символу, не по байтам");
-  assert.equal([...russian].length, russian.length, "в основной плоскости расхождения нет");
+  const cyrillic = "Проверка связи";
+  assert.equal([...cyrillic].length, 14, "Cyrillic counts one per character, not per byte");
+  assert.equal([...cyrillic].length, cyrillic.length, "the basic plane has no surrogate pairs");
 
   const withEmoji = "Готово 👍";
   assert.equal(withEmoji.length, 9, "UTF-16 насчитает лишний");

@@ -58,7 +58,7 @@ test("wiring leaves an existing dictation setup untouched", async () => {
   });
 });
 
-test("wiring points voice mode at the proxy and at a Russian-capable recogniser", async () => {
+test("wiring points voice mode at the proxy and at a recogniser for the chosen language", async () => {
   const home = await withHome({});
   const { wire } = await import("./config.server.ts");
 
@@ -73,7 +73,7 @@ test("wiring points voice mode at the proxy and at a Russian-capable recogniser"
   // Both are validated against OpenAI's enums; the real speaker is substituted by the proxy.
   assert.equal(config.features.voiceMode.tts.model, "tts-1");
   assert.equal(config.features.voiceMode.tts.voice, "alloy");
-  // v2 is English-only and is the default — the reason Russian voice mode is silent.
+  // v2 is English-only and is the default — the reason voice mode in another language is silent.
   assert.equal(config.features.voiceMode.stt.model, "parakeet-tdt-0.6b-v3-int8");
   assert.equal(config.features.voiceMode.stt.language, "ru");
 });
@@ -126,7 +126,7 @@ test("a real change is still written", async () => {
  * The language is the whole point and the easiest thing to leave out.
  *
  * Without it Paseo sends its own default — English — and the engine transcribes
- * Russian as though it were English, which is the exact failure this plugin's
+ * any other language as though it were English, which is the exact failure this plugin's
  * dictation exists to remove. It shipped missing once, and only went unnoticed on the
  * machine where a previous tool had already written it.
  */

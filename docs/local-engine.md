@@ -13,8 +13,8 @@ cannot work.
 at `v0.23.0` — a pure-C Qwen3-TTS runtime, one binary. **Local engine** fetches it
 from that release into `~/.paseo-voice/bin/qwen_tts` and checksums it.
 
-The model that matters is **Qwen3-TTS-12Hz-1.7B-CustomVoice**, about 4.5 GB. It read
-Russian cleanly where the 0.6B did not.
+The model that matters is **Qwen3-TTS-12Hz-1.7B-CustomVoice**, about 4.5 GB. The 0.6B
+mangles words that it reads cleanly.
 
 Weights are **not** downloaded by the plugin. Put a model from Hugging Face into
 `~/.paseo-voice/models/<id>/` and the engine picks it up. Four and a half gigabytes is
@@ -35,8 +35,9 @@ the language, the tempo, and — when **Steady tone** is on — a pinned seed an
 every sentence boundary is a pause while the next one renders. Google synthesises about
 four times faster than real time, and the gaps disappear.
 
-**Voices.** Google has native speakers in every language here. The local model's
-Russian, measured first, is understandable and clearly not native.
+**Voices.** Google has native speakers in every language here. Each of the local
+model's speakers has a language of its own; in the others it is understandable and
+clearly not native.
 
 ## Languages
 

@@ -50,12 +50,12 @@ test("enabling keeps the rest of the daemon block intact", async () => {
 });
 
 test("a prompt written by hand is kept, ours is appended after it", async () => {
-  const home = await withHome({ daemon: { appendSystemPrompt: "Всегда отвечай по-русски." } });
+  const home = await withHome({ daemon: { appendSystemPrompt: "Always answer in German." } });
   const { enable, inspect } = await import("./daemon-settings.server.ts");
   await enable(OURS);
 
   const appended = (await readConfig(home)).daemon.appendSystemPrompt as string;
-  assert.ok(appended.startsWith("Всегда отвечай по-русски."), "the existing instruction must survive");
+  assert.ok(appended.startsWith("Always answer in German."), "the existing instruction must survive");
   assert.ok(appended.includes(OURS), "ours must be there too");
   const state = await inspect(OURS);
   assert.equal(state.promptSet, true);
@@ -73,18 +73,18 @@ test("enabling twice does not duplicate the instruction", async () => {
 });
 
 test("disabling removes only our paragraph", async () => {
-  const home = await withHome({ daemon: { appendSystemPrompt: "Всегда отвечай по-русски." } });
+  const home = await withHome({ daemon: { appendSystemPrompt: "Always answer in German." } });
   const { disable, enable } = await import("./daemon-settings.server.ts");
   await enable(OURS);
   await disable(OURS);
 
   const config = await readConfig(home);
-  assert.equal(config.daemon.appendSystemPrompt, "Всегда отвечай по-русски.");
+  assert.equal(config.daemon.appendSystemPrompt, "Always answer in German.");
   assert.equal(config.daemon.mcp.injectIntoAgents, false);
 });
 
 test("an edited prompt replaces its predecessor rather than piling up beside it", async () => {
-  const home = await withHome({ daemon: { appendSystemPrompt: "Всегда отвечай по-русски." } });
+  const home = await withHome({ daemon: { appendSystemPrompt: "Always answer in German." } });
   const { enable, inspect, replacePrompt } = await import("./daemon-settings.server.ts");
   await enable(OURS);
   await replacePrompt(OURS, EDITED);
@@ -92,7 +92,7 @@ test("an edited prompt replaces its predecessor rather than piling up beside it"
   const appended = (await readConfig(home)).daemon.appendSystemPrompt as string;
   assert.ok(appended.includes(EDITED), "the new text has to be in there");
   assert.ok(!appended.includes(OURS), "and the old one gone");
-  assert.ok(appended.startsWith("Всегда отвечай по-русски."), "somebody else's text is still untouched");
+  assert.ok(appended.startsWith("Always answer in German."), "somebody else's text is still untouched");
   assert.equal((await inspect(EDITED)).promptSet, true);
   // Asked about the superseded wording it still says yes, and that is the point: the
   // block is marked as ours, so recognising it no longer depends on guessing which
@@ -160,7 +160,7 @@ test("a config that already piled up copies is cleaned on the next enable", asyn
 });
 
 test("somebody else's paragraph survives all of that", async () => {
-  const theirs = "Всегда отвечай по-русски.";
+  const theirs = "Always answer in German.";
   const home = await withHome({ daemon: { appendSystemPrompt: `${theirs}\n\n${SHIPPED_BEFORE}` } });
   const { enable } = await import("./daemon-settings.server.ts");
   await enable(SHIPPED_NOW);

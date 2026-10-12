@@ -11,7 +11,8 @@ const configPath = () => path.join(process.env.PASEO_HOME || path.join(homedir()
 
 /**
  * The local STT model voice mode should transcribe with. The default is Parakeet v2,
- * which is English-only — the reason Russian voice mode produces silence out of the box.
+ * which is English-only — the reason voice mode in any other language produces silence
+ * out of the box.
  * v3 covers 25 European languages and auto-detects, and the daemon downloads it itself
  * when the config names a model that is not on disk yet.
  */
@@ -34,7 +35,7 @@ async function read(): Promise<Json> {
 /**
  * Whether dictation currently transcribes through a proxy on `port`.
  *
- * Separate from the speech side on purpose: somebody may want this plugin's Russian
+ * Separate from the speech side on purpose: somebody may want this plugin's
  * recogniser and Paseo's own voices, or the other way round.
  */
 export async function isDictationWired(port: number): Promise<boolean> {
@@ -73,7 +74,7 @@ export async function wireDictation(
       baseUrl: `http://127.0.0.1:${port}/v1`,
     };
     // The language matters more than it looks. Without it Paseo sends its own default,
-    // which is English, and the engine transcribes Russian as though it were English —
+    // which is English, and the engine transcribes any other language as English —
     // which is the exact failure this whole feature exists to remove. `enabled` is the
     // other half: the feature can be pointed here and still be switched off.
     dictation.stt = { ...object(dictation.stt), provider: "openai", model, language };

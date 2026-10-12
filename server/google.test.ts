@@ -105,7 +105,8 @@ test("every sentence is sent with the voice's own accent beside it", async () =>
       await speak({ key: "k", voice: "uk-UA-Chirp3-HD-Orus", text: "Привіт." });
     },
   );
-  // It used to be ru-RU whatever the voice: right for one language out of seven.
+  // Google refuses a voice whose language code does not match it, so a fixed code would
+  // be right for one accent out of thirteen.
   assert.equal(asked[0]?.body.voice.languageCode, "pt-BR");
   assert.equal(asked[1]?.body.voice.languageCode, "uk-UA");
 });
