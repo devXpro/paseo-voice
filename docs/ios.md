@@ -85,6 +85,13 @@ compile — see [e2e.md](e2e.md#trying-a-fix-before-it-ships).
   — the web, no plugin, an older one, an unpatched daemon, an encoder that fails — the
   microphone goes as PCM, as upstream sends it. See
   [patches.md](patches.md#the-phones-voice-in-opus).
+- **Stopping the agent's voice stops it.** The agent's voice arrives as MP3, which the
+  phone plays through the system player, `expo-audio`, one file per segment. Paseo let
+  go of that player with `remove`, and on iOS `remove` only takes it out of a registry:
+  the sound went on to the end of the segment — up to a quarter of a minute of merged
+  sentences — over somebody who had cut in, and after voice mode was turned off.
+  `release` stops it and frees it at once; it is used however playback ends, so no
+  player waits for the garbage collector either. `e2e/cut-in.e2e.ts` is red without it.
 - **The test pinning the old tone's length** is skipped, or it fails the build.
 - **The bundle identifier** becomes `sh.paseo.debug.<team>`. Plain `sh.paseo.debug` is
   already registered to Paseo's own team and cannot be claimed.

@@ -44,6 +44,15 @@ const turnEndAfter = (timeline: Timeline, since: number, timeoutMs = 120_000) =>
 const speechAfter = (timeline: Timeline, since: number) =>
   timeline.heard.filter((one) => one.label === "speech" && one.from >= since && one.to > one.from);
 
+/** How much speech a `link.audio` moment carried: "mp3, 44 KB as sent, 4176 ms of speech". */
+const speechMsOf = (one: Moment): number => Number(/(\d+) ms of speech/.exec(one.detail)?.[1] ?? 0);
+
+/**
+ * A segment worth cutting into: three seconds in, the second or so the detector takes to
+ * be sure somebody is speaking, and still some of it left to stop.
+ */
+const LONG_ENOUGH_MS = 7000;
+
 /** One spoken exchange to its end: what the daemon heard, and how the turn ended. */
 async function exchange(session: LiveSession, words: string) {
   const { timeline } = session;
@@ -77,9 +86,16 @@ describe("listening without mute", { timeout: 900_000 }, () => {
     conversation(daemon, async (session) => {
       const { timeline } = session;
       await session.say("Расскажи подробно, примерно на минуту, как устроен сборщик мусора в Go.");
-      const answering = await moment(timeline, 0, (one) => one.what === "phone.audio_output", 90_000);
-      assert.ok(answering, `the answer never started\n${timeline.render()}`);
-      // Well into its first sentence.
+      // Not the first sound: a model often opens with a short "here goes", which plays out
+      // on its own before the detector is sure anybody is speaking, leaving nothing to stop.
+      const answering = await moment(
+        timeline,
+        0,
+        (one) => one.what === "link.audio" && speechMsOf(one) >= LONG_ENOUGH_MS,
+        90_000,
+      );
+      assert.ok(answering, `the answer never had a segment long enough to cut into\n${timeline.render()}`);
+      // Well into it.
       await sleep(3000);
       const cutAt = timeline.now();
       await session.say("Стоп, хватит. Скажи просто, сколько будет два плюс два.");

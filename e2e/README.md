@@ -18,4 +18,5 @@ How it is put together, how to write tests on it, and how to try a fix before it
 | `engine.e2e.ts` | Paseo's audio engine on its own |
 | `microphone.e2e.ts` | What is said reaches the daemon, in real time |
 | `reply.e2e.ts` | A spoken reply, end to end, and the waiting music's rule |
+| `cut-in.e2e.ts` | The person cuts in, and the agent's voice stops there, as MP3 and as PCM |
 | `live/voice.live.ts` | Real conversations through the relay |

@@ -1,5 +1,5 @@
 import OpusScript from "opusscript";
-import type { Timeline } from "./timeline.ts";
+import type { Heard, Timeline } from "./timeline.ts";
 
 /**
  * A stand-in for `@getpaseo/expo-two-way-audio`, the phone's native audio module.
@@ -103,6 +103,9 @@ function levelOf(pcm: Uint8Array): number {
 export function createNativeAudio(timeline: Timeline, labelOf: (pcm: Uint8Array) => string) {
   // When the speaker is next free: anything queued before then plays after it.
   let freeAt = 0;
+  // What `playPCMData` queued, which is all `stopPlayback` silences: a file the system
+  // player is playing is not the native module's to stop.
+  let queued: Heard[] = [];
   const listeners = new Map<string, Set<Listener>>();
   // One encoder per stream, as the patched module keeps them: voice and dictation.
   const opus = new Map<string, ReturnType<typeof createOpusEncoder>>();
@@ -151,18 +154,21 @@ export function createNativeAudio(timeline: Timeline, labelOf: (pcm: Uint8Array)
       const to = from + pcm.byteLength / BYTES_PER_MS;
       freeAt = to;
       const label = labelOf(pcm);
-      timeline.heard.push({ label, from: Math.round(from), to: Math.round(to) });
+      const heard = { label, from: Math.round(from), to: Math.round(to) };
+      timeline.heard.push(heard);
+      queued.push(heard);
       timeline.note("speaker.queued", `${label}, ${Math.round(to - from)} ms`);
     },
 
     stopPlayback() {
       const now = timeline.now();
-      for (const one of timeline.heard) {
+      for (const one of queued) {
         // Cut what is playing; collapse what had not started yet.
         if (one.to > now) {
           one.to = Math.max(one.from, now);
         }
       }
+      queued = [];
       freeAt = now;
       timeline.note("speaker.stopped");
     },

@@ -666,6 +666,50 @@ await splice(
   "dictation goes up as Opus when it may",
 );
 
+/**
+ * 9. Stopping MP3 speech stops it.
+ *
+ * Once the daemon sends the agent's voice as MP3, the phone plays it through the system
+ * player — `expo-audio`, a file at a time — rather than through the engine PCM goes to.
+ * The engine lets go of that player with `remove`, and on iOS `remove` only takes it out
+ * of the module's registry: the AVPlayer underneath plays on to the end of the file. So
+ * somebody who cut into the agent heard it talk over them to the end of the segment — up
+ * to a quarter of a minute of merged sentences — and the same after turning voice mode
+ * off. `release` is what stops it: the player is paused and freed at once.
+ *
+ * Released however it ended, played out or cut short: a player is never used twice — the
+ * next sentence gets a new one — so none is left waiting for the garbage collector.
+ *
+ * Proved in `e2e/`: the cut-in tests are red without it and green with it, and "an MP3
+ * reply nobody cuts into is played to its end" guards against a fix that only silences.
+ */
+await splice(
+  app("src/audio/file-playback.ts"),
+  `  play(): void;
+  remove(): void;`,
+  `  play(): void;
+  remove(): void;
+  release(): void;`,
+  "the file player can be released",
+);
+
+await splice(
+  app("src/audio/file-playback.ts"),
+  `      subscription.remove();
+      player.remove();`,
+  `      subscription.remove();
+      // paseo-voice: release(), not remove(). On iOS remove() only lets go of the player,
+      // and the AVPlayer under it plays on to the end of the file; release() stops it and
+      // frees it at once. remove() stays as the fallback, so a player that cannot be
+      // released never keeps this from settling.
+      try {
+        player.release();
+      } catch {
+        player.remove();
+      }`,
+  "stopping MP3 speech stops it",
+);
+
 // 3. The test that pins the old tone's length, which would now fail the build.
 await splice(
   app("src/utils/thinking-tone.test.ts"),

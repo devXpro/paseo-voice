@@ -42,8 +42,9 @@ and does three things:
 
 - **Resolution the app normally gets from Metro** (`hooks.ts`): the `@/` alias and
   relative imports written without an extension, for the app's own files only. Expo
-  modules the audio engine imports for encoded files — a path voice never takes — get
-  stand-ins from `harness/stubs/`.
+  modules the audio engine imports for encoded files — the path MP3 speech takes — get
+  stand-ins from `harness/stubs/`, which stop the way an iPhone's do: `remove` on the
+  player leaves it sounding, `pause` and `release` silence it.
 - **The native audio module** the engine `require`s is replaced by `native-audio.ts`.
   That is the only part of the phone that is not real.
 - **Variants without a rebuild**: the runtime's timing constants can be overridden per

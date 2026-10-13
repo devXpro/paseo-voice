@@ -7,6 +7,12 @@ import { readFile } from "./expo-file-system.ts";
  * the system player, rather than through the native module PCM goes to. This plays them
  * on the harness's speaker for as long as the file lasts, and reports back the way
  * `expo-audio` does: loaded with a duration, then finished.
+ *
+ * Stopping works the way it does on an iPhone, with expo-audio 1.0.16: `pause` silences
+ * the player, `release` pauses it and frees it, and `remove` only takes it out of the
+ * module's registry — the AVPlayer underneath plays on to the end of the file, or until
+ * the garbage collector releases it, whenever that is, which here is never. A stand-in
+ * that went quiet on `remove` is how a phone that could not be cut into passed every test.
  */
 
 type Status = { playbackState: string; isLoaded: boolean; didJustFinish: boolean; duration: number };
@@ -23,6 +29,11 @@ export function createAudioPlayer(uri: string) {
   };
   let sounding: { stop(): void } | null = null;
   let finish: ReturnType<typeof setTimeout> | undefined;
+  const silence = () => {
+    clearTimeout(finish);
+    sounding?.stop();
+    sounding = null;
+  };
 
   return {
     addListener(_event: "playbackStatusUpdate", listener: Listener) {
@@ -50,10 +61,14 @@ export function createAudioPlayer(uri: string) {
       }, seconds * 1000);
     },
 
-    remove(): void {
-      clearTimeout(finish);
-      sounding?.stop();
-      sounding = null;
+    pause: silence,
+
+    /** Lets go of the player and nothing else: what is sounding goes on sounding. */
+    remove(): void {},
+
+    /** What the native side does on release: pauses, and then the player is gone. */
+    release(): void {
+      silence();
       listeners.clear();
     },
   };

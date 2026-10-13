@@ -1,6 +1,6 @@
 import { setTimeout as sleep } from "node:timers/promises";
 import type { AudioOutput, CueAnswer, Phone, TurnEvent } from "./phone.ts";
-import { cuePcm, segmentPcm } from "./speech.ts";
+import { cuePcm, segmentPcm, speechMp3 } from "./speech.ts";
 import type { Timeline } from "./timeline.ts";
 
 /**
@@ -24,14 +24,28 @@ export type Network = {
 
 export type Spoken = { confirmed: number; stuckAt: number | null };
 
+/**
+ * How the agent's voice goes down: `pcm` as upstream sends it, `mp3` as it goes once this
+ * plugin's `format` correction is in the daemon — which the phone plays through the system
+ * player rather than through the engine PCM goes to.
+ */
+export type Voice = "pcm" | "mp3";
+
 export type SimulatedDaemon = ReturnType<typeof createSimulatedDaemon>;
 
-export function createSimulatedDaemon(timeline: Timeline, network: Network, cueMs = 3000) {
+export function createSimulatedDaemon(
+  timeline: Timeline,
+  network: Network,
+  options: { cueMs?: number; voice?: Voice } = {},
+) {
+  const { cueMs = 3000, voice = "pcm" } = options;
   let phone: Phone | null = null;
   let downFreeAt = 0;
   let audioCounter = 0;
   let speakCounter = 0;
   const confirmations = new Map<string, () => void>();
+  /** Abandons the reply in flight; set while one is. */
+  let cutIn: (() => void) | null = null;
   const cueTag = "harness-cue";
   const cueBase64 = cuePcm(cueMs).toString("base64");
 
@@ -84,6 +98,19 @@ export function createSimulatedDaemon(timeline: Timeline, network: Network, cueM
     },
 
     /**
+     * The person starts speaking, as the daemon's detector confirms it — after
+     * `voice-session.js`: the phone is told at once (`voice_input_state`), and the reply
+     * in flight is abandoned — the segment playing is no longer waited for, and the ones
+     * after it are never sent. Returns when the daemon heard it.
+     */
+    hearsSpeech(): number {
+      timeline.note("daemon.hears-speech");
+      cutIn?.();
+      down(64, () => phone?.receiveServerSpeech(true));
+      return timeline.now();
+    },
+
+    /**
      * Speaks a reply made of segments of the given lengths, as one `speak` tool call:
      * the call shows as running before any audio — the first sentence is still being
      * synthesised — then the segments go out the way the TTS manager sends them, and the
@@ -93,41 +120,57 @@ export function createSimulatedDaemon(timeline: Timeline, network: Network, cueM
      */
     async speak(segmentsMs: number[], patienceMs = 4000, synthMs = 800): Promise<Spoken> {
       const callId = `speak-${++speakCounter}`;
+      let abandoned = false;
+      let stopWaiting = () => {};
+      cutIn = () => {
+        abandoned = true;
+        stopWaiting();
+      };
       timeline.note("daemon.speak", "running");
       down(64, () => phone?.receiveSpeakCall(callId, "running"));
       await sleep(synthMs);
       const finish = (status: string) => {
+        cutIn = null;
         timeline.note("daemon.speak", status);
         down(64, () => phone?.receiveSpeakCall(callId, status));
       };
+      let confirmedCount = 0;
       for (const [index, ms] of segmentsMs.entries()) {
+        if (abandoned) {
+          break;
+        }
         const audioId = `audio-${++audioCounter}`;
         const payload: AudioOutput = {
           id: `${audioId}:0`,
           groupId: audioId,
           chunkIndex: 0,
           isLastChunk: true,
-          audio: segmentPcm(index, ms).toString("base64"),
-          format: "pcm",
+          audio: (voice === "mp3" ? speechMp3(ms) : segmentPcm(index, ms)).toString("base64"),
+          format: voice,
           isVoiceMode: true,
         };
         let giveUp: ReturnType<typeof setTimeout> | undefined;
         const confirmed = new Promise<boolean>((resolve) => {
-          confirmations.set(payload.id, () => resolve(true));
+          confirmations.set(payload.id, () => {
+            confirmedCount += 1;
+            resolve(true);
+          });
+          stopWaiting = () => resolve(true);
           giveUp = setTimeout(() => resolve(false), ms + patienceMs + 2 * network.latencyMs + payload.audio.length / network.bytesPerMs);
         });
-        timeline.note("daemon.emits", `segment ${index}, ${ms} ms of speech`);
+        timeline.note("daemon.emits", `segment ${index}, ${ms} ms of speech, ${voice}`);
         down(payload.audio.length, () => phone?.receiveAudio(payload));
         const played = await confirmed;
         clearTimeout(giveUp);
         confirmations.delete(payload.id);
         if (!played) {
+          cutIn = null;
           timeline.note("daemon.stuck", `segment ${index} was never confirmed`);
           return { confirmed: index, stuckAt: index };
         }
       }
       finish("completed");
-      return { confirmed: segmentsMs.length, stuckAt: null };
+      return { confirmed: confirmedCount, stuckAt: null };
     },
   };
 }

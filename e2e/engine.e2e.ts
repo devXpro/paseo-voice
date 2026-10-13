@@ -3,7 +3,7 @@ import { test } from "node:test";
 import { setTimeout as sleep } from "node:timers/promises";
 import { createNativeAudio } from "./harness/native-audio.ts";
 import { engineSpecifier } from "./harness/paseo-source.ts";
-import { cuePcm, labelOf, rememberCue, segmentPcm } from "./harness/speech.ts";
+import { cuePcm, labelOf, rememberCue, segmentPcm, speechMp3 } from "./harness/speech.ts";
 import { createTimeline } from "./harness/timeline.ts";
 
 /**
@@ -34,6 +34,18 @@ function speechSource(index: number, ms: number) {
   return {
     size: bytes.byteLength,
     type: "audio/pcm;rate=24000;bits=16",
+    async arrayBuffer() {
+      return Uint8Array.from(bytes).buffer;
+    },
+  };
+}
+
+/** Speech as it comes once the agent's voice is MP3: played through the system player. */
+function mp3Source(ms: number) {
+  const bytes = speechMp3(ms);
+  return {
+    size: bytes.byteLength,
+    type: "audio/mpeg",
     async arrayBuffer() {
       return Uint8Array.from(bytes).buffer;
     },
@@ -81,5 +93,19 @@ test("a sound stopped while its bytes are still coming is never heard", async ()
 
   const cue = timeline.heard.filter((one) => one.label === "cue" && one.to > one.from);
   assert.deepEqual(cue, [], timeline.render());
+  await engine.destroy();
+});
+
+test("MP3 speech goes quiet the moment the engine is stopped", async () => {
+  const { timeline, engine } = await engineWithSpeaker();
+
+  void engine.play(mp3Source(5000)).catch(() => {});
+  await sleep(1000);
+  const stoppedAt = timeline.now();
+  engine.stop();
+  engine.clearQueue();
+  await sleep(500);
+
+  assert.deepEqual(timeline.heardAfter(stoppedAt + 100), [], timeline.render());
   await engine.destroy();
 });

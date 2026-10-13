@@ -44,6 +44,18 @@ something you said was not recognised: a cough, a noise, a phrase lost to the bu
 Your speech aborted its voice, and only a recognised phrase used to lift that. Apply
 **Voice session**; until then, say anything it can recognise.
 
+## I cut in, and the agent talks on to the end of its sentence
+
+On the phone, with the agent's voice as MP3: the daemon hears you and stops sending the
+rest of the answer, the waiting music goes quiet, but the segment already playing goes on
+— up to a quarter of a minute. The phone played it through the system player and stopped
+it with a call that, on iOS, does not stop it. Rebuild the app with `ios-build/build.sh`;
+the correction **Stopping the agent's voice stops it** is in
+[ios.md](ios.md#the-corrections-it-applies). The App Store app has the same flaw and
+cannot be rebuilt: there it goes away only with the agent's voice back as PCM —
+`PASEO_VOICE_TTS_FORMAT=pcm` in the daemon's environment, see
+[patches.md](patches.md#the-agents-voice-in-mp3).
+
 ## On mobile internet voice mode crawls, or hears nothing
 
 The phone streams its microphone uncompressed — about 340 kbit/s once it is base64 — and

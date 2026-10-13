@@ -45,6 +45,24 @@ export function segmentPcm(index: number, ms: number, rate = 24_000): Buffer {
   return pcm;
 }
 
+/**
+ * MP3 the length of `ms`, in the shape Google sends speech — MPEG-2 Layer III, 24 kHz,
+ * 64 kbit/s, mono — made of frame headers and silence. The phone hands it whole to the
+ * system player, and the player stand-in only reads how long it lasts.
+ */
+export function speechMp3(ms: number): Buffer {
+  const frameBytes = 192; // 72 000 × 64 kbit/s ÷ 24 kHz
+  const frameMs = 24; // 576 samples at 24 kHz
+  const mp3 = Buffer.alloc(Math.max(1, Math.round(ms / frameMs)) * frameBytes);
+  for (let at = 0; at < mp3.length; at += frameBytes) {
+    mp3[at] = 0xff;
+    mp3[at + 1] = 0xf3; // MPEG-2, Layer III, no CRC
+    mp3[at + 2] = 0x84; // 64 kbit/s, 24 kHz, no padding
+    mp3[at + 3] = 0xc0; // mono
+  }
+  return mp3;
+}
+
 /** PCM16 mono at 16 kHz, the cue's own rate: a 440 Hz tone, plainly not speech. */
 export function cuePcm(ms: number): Buffer {
   const samples = Math.round(16 * ms);

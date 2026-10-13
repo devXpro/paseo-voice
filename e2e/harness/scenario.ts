@@ -1,6 +1,6 @@
 import { setTimeout as sleep } from "node:timers/promises";
 import { createPhone } from "./phone.ts";
-import { createSimulatedDaemon, type Network } from "./simulated-daemon.ts";
+import { createSimulatedDaemon, type Network, type Voice } from "./simulated-daemon.ts";
 import { createTimeline, type Heard, type Timeline } from "./timeline.ts";
 
 /** The phone and the daemon through the relay, on a decent connection. */
@@ -18,11 +18,18 @@ export const UPSTREAM_CUE_WAIT = "?minSilenceMs=1500";
  */
 const WRAP_UP_MS = 1000;
 
-type Setup = { network: Network; pluginCue: boolean; runtimeVariant?: string };
+/**
+ * How soon the agent's voice has to stop once the phone hears that the person is
+ * speaking. Stopping is the speaker's own business and takes milliseconds; this is a
+ * margin for timers, and still far short of the seconds a sentence left playing lasts.
+ */
+const STOPS_WITHIN_MS = 250;
+
+type Setup = { network: Network; pluginCue: boolean; runtimeVariant?: string; voice?: Voice };
 
 async function setUp(options: Setup) {
   const timeline = createTimeline();
-  const daemon = createSimulatedDaemon(timeline, options.network);
+  const daemon = createSimulatedDaemon(timeline, options.network, { voice: options.voice });
   const phone = await createPhone({
     timeline,
     runtimeVariant: options.runtimeVariant,
@@ -37,7 +44,9 @@ async function setUp(options: Setup) {
 
 const audible = (one: Heard) => one.to > one.from;
 const cue = (timeline: Timeline) => timeline.heard.filter((one) => audible(one) && one.label === "cue");
-const words = (timeline: Timeline) => timeline.heard.filter((one) => audible(one) && one.label.startsWith("segment"));
+// MP3 speech is played by the system player and heard as plain `speech`.
+const words = (timeline: Timeline) =>
+  timeline.heard.filter((one) => audible(one) && (one.label.startsWith("segment") || one.label === "speech"));
 
 export type ReplyRun = Awaited<ReturnType<typeof runReply>>;
 
@@ -96,6 +105,40 @@ export async function runProgressNote(options: Setup & { workMs: number }) {
     timeline,
     /** The cue while the agent was working between the two things it said. */
     cueWhileWorking: cue(timeline).filter((one) => one.to > workFrom && one.from < workTo),
+  };
+  await phone.hangUp();
+  return run;
+}
+
+/**
+ * The person cuts in: the agent answers, and `cutAfterMs` after its first words are heard
+ * the daemon's detector confirms that the person is speaking. From then on the agent's
+ * voice has no business sounding — not to the end of its sentence, and not to the end of
+ * a segment, which after merging can be a quarter of a minute of speech.
+ */
+export async function runCutIn(options: Setup & { segmentsMs: number[]; cutAfterMs: number }) {
+  const { timeline, daemon, phone } = await setUp(options);
+  await sleep(1200);
+  const reply = daemon.speak(options.segmentsMs);
+  const deadline = timeline.now() + 10_000;
+  while (words(timeline).length === 0 && timeline.now() < deadline) {
+    await sleep(20);
+  }
+  const firstWords = words(timeline)[0];
+  if (!firstWords) {
+    throw new Error(`the reply was never heard\n${timeline.render()}`);
+  }
+  await sleep(Math.max(0, firstWords.from + options.cutAfterMs - timeline.now()));
+  const cutAt = daemon.hearsSpeech();
+  await reply;
+  await sleep(2000);
+
+  // The phone hears of it one link latency after the daemon.
+  const quietFrom = cutAt + options.network.latencyMs + STOPS_WITHIN_MS;
+  const run = {
+    timeline,
+    /** The agent's voice, wherever it was still sounding once it should have stopped. */
+    voiceAfterTheCut: words(timeline).filter((one) => one.to > quietFrom),
   };
   await phone.hangUp();
   return run;
