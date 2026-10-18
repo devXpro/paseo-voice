@@ -225,6 +225,21 @@ A free Apple ID signs for seven days. Run `ios-build/build.sh` again. Installing
 build fails the same way — «This provisioning profile has expired» — when Xcode reused
 a profile that ran out after the build; see [ios.md](ios.md#signing).
 
+## The app I built closes the moment it opens
+
+It was built with Xcode 27 by a `build.sh` older than 0.10.1. The crash report on the
+phone — Settings → Privacy & Security → Analytics & Improvements → Analytics Data,
+`PaseoDebug-…` — says `EXC_BREAKPOINT` in
+`_UIApplicationEvaluateRuntimeIssueForNoSceneLifecycleAdoption`: iOS 27's SDK will not
+start an app that has not adopted scenes, and Paseo has not yet. Update the plugin and
+run the build again; see [ios.md](ios.md#xcode-27).
+
+## The build stops on «The iOS deployment target 'IPHONEOS_DEPLOYMENT_TARGET' is set to …»
+
+The rest of the line reads «…but the range of supported deployment target versions is
+15.0 to 27.1.x», for SDWebImage, RNSVG or AsyncStorage: Xcode 27 with a `build.sh` older
+than 0.10.1. Update the plugin and run it again; see [ios.md](ios.md#xcode-27).
+
 ## `build.sh` ends in an error at 7/7 with no phone attached
 
 The build succeeded — `BUILD SUCCEEDED` is in `~/.paseo-voice/ios-build/xcodebuild.log`,

@@ -53,10 +53,14 @@ compile — see [e2e.md](e2e.md#trying-a-fix-before-it-ships).
 4. **Installs dependencies.**
 5. **Runs `expo prebuild`.** There is no `ios/` directory in the repository — Expo
    writes one from `app.config.js` — so this is the normal path, not a reset of
-   something.
+   something. Then raises the pods left below the app's deployment target, for
+   [Xcode 27](#xcode-27).
 6. **Builds**, `-configuration Release`. Debug produces a dev client that looks for a
-   Metro server and shows "No development servers found" on a phone.
-7. **Installs** on a connected device with `xcrun devicectl`, if one is there.
+   Metro server and shows "No development servers found" on a phone. With
+   [Xcode 27](#xcode-27) the binary is then marked as built with SDK 26.2 and signed
+   again.
+7. **Installs** on a connected device with `xcrun devicectl`, if one is there. Xcode 26
+   lists a phone by a UUID and Xcode 27 by its UDID; both are found.
 
 ## The corrections it applies
 
@@ -99,6 +103,29 @@ compile — see [e2e.md](e2e.md#trying-a-fix-before-it-ships).
 Each is a string replacement that refuses when its anchor is missing or appears twice.
 After an upstream release, run it again: it will either apply or say exactly which
 correction no longer fits.
+
+## Xcode 27
+
+Its iOS SDK changed two things, and `build.sh` handles both. With Xcode 26 neither step
+changes anything.
+
+**A deployment target below iOS 15.0 is an error**, where Xcode 26 only warned. React
+Native's post-install raises every pod to its minimum but skips the pods' resource
+bundles, which keep the pod's own old target — 9.0 for SDWebImage — and the build
+stopped on them. After `expo prebuild` the script adds a few lines to the generated
+Podfile's `post_install` that raise whatever is still below the app's own target (15.1,
+unless `ios.deploymentTarget` says otherwise). If the Podfile has no single
+`post_install`, it stops and says so instead of guessing.
+
+**An app without scenes does not launch.** Built with SDK 27, an app that has not
+adopted the scene life cycle closes the moment it opens: UIKit traps in
+`_UIApplicationEvaluateRuntimeIssueForNoSceneLifecycleAdoption`, and the crash report
+says `EXC_BREAKPOINT`. Paseo has not adopted scenes yet (Expo 54). UIKit goes by the SDK
+written into the binary, not by the iOS it runs on, so the same app built with SDK 26
+runs on iOS 27. After the build the script marks the binary as built with SDK 26.2
+(`vtool -set-build-version`) and signs it again with the identity and entitlements Xcode
+gave it. It does this only when the SDK is 27 or later and `Info.plist` declares no
+`UIApplicationSceneManifest`, so the step turns itself off once Paseo moves to scenes.
 
 ## Signing
 

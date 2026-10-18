@@ -100,6 +100,23 @@ export APP_VARIANT=development
 # There is no ios/ directory in the repository: Expo writes it from app.config.js, so a
 # clean prebuild is the normal path rather than a reset.
 ( cd "$CHECKOUT/packages/app" && npx expo prebuild --platform ios --clean )
+
+# Xcode 27's SDK refuses a deployment target below iOS 15.0 outright, where 26 only
+# warned. React Native's post-install raises every pod to its minimum but skips the
+# pods' resource bundles, which keep the pod's own old target — 9.0 for SDWebImage —
+# and fail the build. So the Podfile raises whatever is still below the app's target.
+PODFILE="$CHECKOUT/packages/app/ios/Podfile"
+RAISE="    minimum = podfile_properties['ios.deploymentTarget'] || '15.1'
+    installer.pods_project.targets.each do |pod_target|
+      pod_target.build_configurations.each do |build|
+        current = build.build_settings['IPHONEOS_DEPLOYMENT_TARGET']
+        next unless current && Gem::Version.correct?(current) && Gem::Version.new(current) < Gem::Version.new(minimum)
+        build.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = minimum
+      end
+    end"
+RAISE="$RAISE" awk '{ print } /^[[:space:]]*post_install do \|installer\|[[:space:]]*$/ { print ENVIRON["RAISE"]; n++ }
+  END { exit n != 1 }' "$PODFILE" > "$PODFILE.raised" && mv "$PODFILE.raised" "$PODFILE" \
+  || die "the Podfile has no single post_install to raise old pod targets in; Expo's template has changed"
 ( cd "$CHECKOUT/packages/app/ios" && pod install )
 
 # Push notifications, dropped unless something says otherwise.
@@ -141,10 +158,36 @@ grep -aq "BUILD SUCCEEDED" "$WORK/xcodebuild.log" || die "the build failed; deta
 APP="$(find "$DERIVED/Build/Products/Release-iphoneos" -maxdepth 1 -name '*.app' | head -1)"
 [ -n "$APP" ] || die "the build left no .app behind"
 
+# Xcode 27's SDK stops at launch any app that has not moved to the scene life cycle: a
+# trap in UIKit's _UIApplicationEvaluateRuntimeIssueForNoSceneLifecycleAdoption the
+# moment the icon is tapped. Paseo has not moved yet, and UIKit goes by the SDK written
+# into the binary, not by the iOS it runs on — the same app built with SDK 26 runs on
+# iOS 27. So until Paseo declares a scene manifest of its own, the binary says SDK 26.2
+# and is signed again, with the identity and entitlements Xcode gave it.
+INFO="$APP/Info.plist"
+BIN="$APP/$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$INFO")"
+SDK="$(xcrun vtool -show-build "$BIN" 2>/dev/null | awk '$1 == "sdk" { print $2 }' || true)"
+if [ "${SDK%%.*}" -ge 27 ] 2>/dev/null \
+   && ! /usr/libexec/PlistBuddy -c 'Print :UIApplicationSceneManifest' "$INFO" >/dev/null 2>&1; then
+  MINOS="$(xcrun vtool -show-build "$BIN" | awk '$1 == "minos" { print $2 }')"
+  SIGNER="$(codesign -dvv "$APP" 2>&1 | sed -n 's/^Authority=//p' | head -1)"
+  codesign -d --entitlements - --xml "$APP" > "$WORK/entitlements.plist" 2>/dev/null
+  xcrun vtool -set-build-version ios "$MINOS" 26.2 -replace -output "$BIN.sdk26" "$BIN" 2>/dev/null \
+    || die "could not mark the app as built with SDK 26.2"
+  # Written over, not moved: the binary keeps its own mode.
+  cat "$BIN.sdk26" > "$BIN" && rm "$BIN.sdk26"
+  codesign --force --sign "$SIGNER" --entitlements "$WORK/entitlements.plist" \
+    --generate-entitlement-der --timestamp=none "$APP" \
+    && codesign --verify --deep --strict "$APP" \
+    || die "the app did not sign again after its SDK was marked"
+  echo "  built with SDK $SDK, marked 26.2: Paseo has not adopted the scene life cycle iOS 27 requires"
+fi
+
 say "7/7  Installing on the phone"
-# By UUID shape, not by column: the model name has spaces in it and the columns shift.
+# By identifier shape, not by column: the model name has spaces in it and the columns
+# shift. Xcode 26 lists a phone by a UUID, Xcode 27 by its UDID.
 DEVICE="$(xcrun devicectl list devices 2>/dev/null | grep -i connected \
-  | grep -oE '[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}' | head -1)"
+  | grep -oE '[0-9A-F]{8}-([0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}|[0-9A-F]{16})' | head -1)"
 if [ -n "$DEVICE" ]; then
   xcrun devicectl device install app --device "$DEVICE" "$APP" && echo "  installed on $DEVICE"
 else
