@@ -1,6 +1,6 @@
 {
   "name": "paseo-voice",
-  "version": "0.9.1",
+  "version": "0.10.0",
   "description": "Natural voices for Paseo voice mode and dictation in seven languages: Google Cloud TTS, music instead of the waiting beep, compressed audio both ways, and fixes for the sentences Paseo drops.",
   "license": "MIT",
   "author": "Roman Yarmolenko",
