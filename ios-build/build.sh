@@ -185,9 +185,10 @@ fi
 
 say "7/7  Installing on the phone"
 # By identifier shape, not by column: the model name has spaces in it and the columns
-# shift. Xcode 26 lists a phone by a UUID, Xcode 27 by its UDID.
+# shift. Xcode 26 lists a phone by a UUID, Xcode 27 by its UDID. No phone is an empty
+# grep, which pipefail would turn into a silent exit before the line that says so.
 DEVICE="$(xcrun devicectl list devices 2>/dev/null | grep -i connected \
-  | grep -oE '[0-9A-F]{8}-([0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}|[0-9A-F]{16})' | head -1)"
+  | grep -oE '[0-9A-F]{8}-([0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}|[0-9A-F]{16})' | head -1 || true)"
 if [ -n "$DEVICE" ]; then
   xcrun devicectl device install app --device "$DEVICE" "$APP" && echo "  installed on $DEVICE"
 else

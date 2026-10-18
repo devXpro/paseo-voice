@@ -240,12 +240,14 @@ The rest of the line reads «…but the range of supported deployment target ver
 15.0 to 27.1.x», for SDWebImage, RNSVG or AsyncStorage: Xcode 27 with a `build.sh` older
 than 0.10.1. Update the plugin and run it again; see [ios.md](ios.md#xcode-27).
 
-## `build.sh` ends in an error at 7/7 with no phone attached
+## `build.sh` finds no phone at 7/7
 
 The build succeeded — `BUILD SUCCEEDED` is in `~/.paseo-voice/ios-build/xcodebuild.log`,
 and the app is under `~/.paseo-voice/ios-build/derived/Build/Products/Release-iphoneos/`.
-Only the last step failed: it looks for a connected phone and stops on finding none. A
-phone already paired with Xcode takes the app over the network:
+Only the last step had nowhere to put it: it installs on a phone `devicectl` calls
+"connected", and says «no phone connected» when there is none. Before 0.10.2 it ended
+in an error there instead, without a word. A phone already paired with Xcode takes the
+app over the network:
 
 ```sh
 xcrun devicectl list devices
