@@ -39,6 +39,7 @@ import { speechLanguageOf } from "./shared/languages.shared.ts";
 import { msg, sayAll } from "./shared/i18n/index.ts";
 import { installBinary } from "./server/binary.server.ts";
 import { ensureCodec } from "./server/codec.server.ts";
+import { describeRpc, describeVoice } from "./server/capabilities.server.ts";
 import { createController } from "./server/controller.server.ts";
 import { createEngine } from "./server/engine.server.ts";
 import { render as renderCue, warmUp as warmUpCue } from "./server/cue.server.ts";
@@ -129,6 +130,8 @@ export default function contribute(server: PluginServerContext) {
     return status;
   };
 
+  // For God Mode: what an assistant outside Paseo may read and change here.
+  server.handle(describeRpc, () => describeVoice());
   server.handle(getStatus, async () => fresh(await controller.status()));
   server.handle(setProvider, async (input) => fresh(await controller.setProvider(input.provider)));
   server.handle(setSpeechLocale, async (input) => fresh(await controller.setSpeechLocale(input.locale)));

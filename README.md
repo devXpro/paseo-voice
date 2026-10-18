@@ -16,7 +16,7 @@ for the things in Paseo that no setting reaches.
 [![Release](https://img.shields.io/github/v/release/devXpro/paseo-voice?style=flat-square&color=111111&labelColor=111111&label=release)](https://github.com/devXpro/paseo-voice/releases)
 [![Paseo](https://img.shields.io/badge/Paseo-%E2%89%A5%200.10-111111?style=flat-square&labelColor=111111)](https://paseo.sh)
 [![Licence](https://img.shields.io/github/license/devXpro/paseo-voice?style=flat-square&color=111111&labelColor=111111&label=licence)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-162%20passing-111111?style=flat-square&labelColor=111111)](docs/development.md)
+[![Tests](https://img.shields.io/badge/tests-175%20passing-111111?style=flat-square&labelColor=111111)](docs/development.md)
 
 🗣️ **Seven languages, thirteen accents** · 🎶 **Music instead of the beep** · 📊 **Spend metered live** · 🩹 **Six bugs fixed in Paseo itself** · 📶 **Voice in a sixth of the traffic, both ways**
 
@@ -89,6 +89,24 @@ afterwards. Getting a key, and what it costs, is in [docs/google.md](docs/google
 | ⌨️ **Dictation** | Whisper Large v3 Turbo through `whisper-server`: the engine, its weights, a dictionary per language, and handing Paseo's dictation to it. |
 | ⚙️ **Agent speech** | The two daemon settings voice mode cannot work without. [docs/patches.md](docs/patches.md#the-two-daemon-settings) |
 | 🔗 **Connection** | Points `~/.paseo/config.json` at this plugin's proxy. |
+
+## 🤖 From ChatGPT, through God Mode
+
+`meta.describe` tells an assistant outside Paseo, such as
+[Paseo God Mode](https://github.com/devXpro/paseo-god-mode-plugin) 0.8 or newer, what this plugin
+can do, because Paseo itself hands a remote client nothing but a blind RPC call. It answers in the
+`paseo.capabilities/1` shape with two reads and eight actions: the status and the list of
+voices, and then speed, provider, Google voice, local voice, language and accent, steady
+delivery, the phone filter and the volume of the waiting music. Every action is local,
+undone with one more call, and runs without asking first.
+
+Only how speech sounds is offered. Installing things, writing into Paseo's files,
+restarting, the Google key, and the prompt stay in the panel, and every answer is trimmed
+to the status a listener asks about, never the key's hint or where it is stored.
+
+The arguments are rendered from the same zod contracts the handlers parse with
+(`server/capabilities.server.ts`), and the tests prove each operation's arguments pass the
+handler's own contract, with the same bounds the plugin enforces.
 
 ## 📚 Documentation
 
