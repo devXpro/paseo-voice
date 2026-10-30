@@ -296,11 +296,9 @@ const detectorSplices: readonly Splice[] = [
  */
 const formatSplices: readonly Splice[] = [
   {
-    find: `        model: options.ttsModel,
-        responseFormat: "pcm",
+    find: `        responseFormat: "pcm",
     };`,
-    replace: `        model: options.ttsModel,
-        // paseo-voice: MP3 to the phone, a sixth of the PCM; the plugin's proxy answers it.
+    replace: `        // paseo-voice: MP3 to the phone, a sixth of the PCM; the plugin's proxy answers it.
         responseFormat: process.env.PASEO_VOICE_TTS_FORMAT || "mp3",
     };`,
   },
@@ -506,7 +504,7 @@ export const TARGETS: readonly Target[] = [
     kind: "asar",
     entry: "node_modules/@getpaseo/server/dist/server/server/agent/tts-manager.js",
     splices: ttsSplices,
-    // Paseo 0.10.3, 0.11.1 and 0.11.2, byte for byte the same file.
+    // Paseo 0.10.3, 0.11.1, 0.11.2 and 0.14.0, byte for byte the same file.
     verified: ["c0175e3a58b1b6076f7792e5480bd9f5a39d3e1b720427833d89e782d60b4508"],
   },
   {
@@ -517,7 +515,7 @@ export const TARGETS: readonly Target[] = [
     kind: "asar",
     entry: "node_modules/@getpaseo/server/dist/server/server/session/voice/voice-turn-controller.js",
     splices: [...muteSplices, ...prerollSplices, ...detectorSplices],
-    // Paseo 0.10.3, 0.11.1 and 0.11.2, byte for byte the same file.
+    // Paseo 0.10.3, 0.11.1, 0.11.2 and 0.14.0, byte for byte the same file.
     verified: ["143bec13ce0c86542ede7f943c543cb90e58179e88a56efeacdf2896a8000697"],
   },
   {
@@ -527,8 +525,8 @@ export const TARGETS: readonly Target[] = [
     kind: "asar",
     entry: "node_modules/@getpaseo/server/dist/server/server/speech/providers/openai/config.js",
     splices: formatSplices,
-    // Paseo 0.11.2.
-    verified: ["f936779bd4067b351eaaf127f098f9e7ece5458e50644e124ea8a4e0f2e09275"],
+    // Paseo 0.14.0, the first with the speech endpoints on each use site.
+    verified: ["eaddb52ab59b6336456ad851f12991917988cbd9db09411978db529bbab0105d"],
   },
   {
     id: "reply",
@@ -537,8 +535,8 @@ export const TARGETS: readonly Target[] = [
     kind: "asar",
     entry: "node_modules/@getpaseo/server/dist/server/server/speech/providers/openai/tts.js",
     splices: replySplices,
-    // Paseo 0.11.2.
-    verified: ["70f894216b059c0c8f3a274b6038b14fc6242205cb777603d8160389301f6228"],
+    // Paseo 0.13.2 and 0.14.0, byte for byte the same file.
+    verified: ["ac6e23b2210bd5d3af8f4f02989ab5ed5b67cc922ccb74cd110c1c10f92e5205"],
   },
   {
     // One file, so one correction, as above.
@@ -548,7 +546,7 @@ export const TARGETS: readonly Target[] = [
     kind: "asar",
     entry: "node_modules/@getpaseo/server/dist/server/server/session/voice/voice-session.js",
     splices: [...abortSplices, ...voiceOpusSplices],
-    // Paseo 0.11.1 and 0.11.2, byte for byte the same file.
+    // Paseo 0.11.1, 0.11.2 and 0.14.0, byte for byte the same file.
     verified: ["0db7bd264ff2416b2ead22abdee4935f060ae1e341f9a2641c0f82a146e15fe3"],
   },
   {
@@ -558,7 +556,7 @@ export const TARGETS: readonly Target[] = [
     kind: "asar",
     entry: "node_modules/@getpaseo/server/dist/server/server/dictation/dictation-stream-manager.js",
     splices: dictationOpusSplices,
-    // Paseo 0.11.2.
+    // Paseo 0.11.2 and 0.14.0, byte for byte the same file.
     verified: ["e188e9451878e610356af8ea75716b7a05963ae414d11bfa8f89bfe0f89bca90"],
   },
   {

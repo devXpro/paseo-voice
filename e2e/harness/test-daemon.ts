@@ -51,16 +51,19 @@ async function writeConfig(
   const main = JSON.parse(await readFile(path.join(MAIN_HOME, "config.json"), "utf8")) as {
     version?: unknown;
     daemon?: { mcp?: unknown; appendSystemPrompt?: unknown; relay?: RelaySettings };
-    providers?: { openai?: { tts?: { baseUrl?: string }; stt?: { baseUrl?: string } } };
     agents?: unknown;
     features?: Record<string, unknown>;
   };
-  if (speechUrl && main.providers?.openai?.tts) {
-    main.providers.openai.tts.baseUrl = speechUrl;
-  }
-  if (dictationUrl && main.providers?.openai?.stt) {
-    main.providers.openai.stt.baseUrl = dictationUrl;
-  }
+  // The endpoints live on the sites that use them, so the test daemon gets its own address
+  // there and the rest of the site is the main one's.
+  const site = (feature: "voiceMode" | "dictation", kind: "tts" | "stt", url?: string) => {
+    const current = (main.features?.[feature] as Record<string, Record<string, unknown> | undefined> | undefined)?.[kind];
+    if (url && current?.baseUrl) {
+      current.baseUrl = url;
+    }
+  };
+  site("voiceMode", "tts", speechUrl);
+  site("dictation", "stt", dictationUrl);
   const config = {
     version: main.version,
     daemon: {
@@ -69,7 +72,6 @@ async function writeConfig(
       appendSystemPrompt: prompt ?? main.daemon?.appendSystemPrompt,
       relay: relay ? { ...main.daemon?.relay, enabled: true } : { enabled: false },
     },
-    providers: main.providers,
     pluginsEnabled: false,
     agents: main.agents,
     features: { ...main.features, webUi: { enabled: false } },

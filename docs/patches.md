@@ -155,6 +155,10 @@ once, since Opus carries state from packet to packet. See
 
 `@getpaseo/server/.../speech/providers/openai/config.js`
 
+Paseo 0.14 only: it rewrote this file when it moved each speech endpoint onto its own
+use site, and the correction is anchored to the new shape. The speaking site's format is
+still written in the code, `responseFormat: "pcm"`, with no setting behind it.
+
 The agent's voice used to reach the phone as raw 24 kHz PCM, 48 KB for every second of
 speech, one message per sentence — and the phone starts a sentence only once it holds
 all of it. Measured on a phone: 0.8 s on the way for five and a half seconds of speech,

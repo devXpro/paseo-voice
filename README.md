@@ -32,7 +32,7 @@ from the language you talk to your agents in.
 Paseo's voice mode defaults to a local English-only stack — Parakeet v2 for
 recognition, Kokoro for speech — so speaking anything else to it produces silence or
 nonsense, and even in English the voices are a step behind. The only seam for a
-different engine is the OpenAI provider: point `providers.openai.tts.baseUrl` somewhere
+different engine is the OpenAI provider: point the OpenAI speech provider's `baseUrl` somewhere
 local and Paseo will read through it. This plugin is that somewhere.
 
 Google does the speaking by default, for the two things that matter in an assistant

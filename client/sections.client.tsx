@@ -824,7 +824,7 @@ export const SECTIONS: Section[] = [
             <Row
               theme={theme}
               label={tr.t("paseo.where")}
-              hint="providers.openai.tts.baseUrl"
+              hint="features.voiceMode.tts.baseUrl"
               value={data.wired ? tr.t("paseo.atPlugin") : tr.t("paseo.elsewhere")}
               valueColour={tone(theme, data.wired ? "ok" : "warn")}
             />

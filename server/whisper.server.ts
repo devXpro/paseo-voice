@@ -12,7 +12,7 @@ import { paths } from "./paths.server.ts";
  *
  * Paseo's built-in recogniser is Parakeet, which is English-only, so dictating any
  * other language produces confident nonsense. The seam is the same one the speech side uses: point
- * `providers.openai.stt.baseUrl` at something local and Paseo will transcribe through
+ * the OpenAI recogniser's `baseUrl` at something local and Paseo will transcribe through
  * it. This is that something.
  *
  * The recognition itself is `whisper-server` from whisper.cpp — a neural network with

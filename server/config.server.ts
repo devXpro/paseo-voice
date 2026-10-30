@@ -33,6 +33,18 @@ async function read(): Promise<Json> {
 }
 
 /**
+ * A speech site's endpoint, read the way Paseo reads it: the site's own `baseUrl`, else the
+ * one in the shared `providers.openai` block older plugin versions wrote. Paseo folds that
+ * block into the sites when it loads the file and drops it at its next save, so a config
+ * that has not been saved since the update still carries the address only there.
+ */
+function baseUrlOf(config: Json, feature: "dictation" | "voiceMode", kind: "stt" | "tts"): unknown {
+  const site = object(object(object(config.features)[feature])[kind]);
+  const shared = object(object(config.providers).openai);
+  return site.baseUrl ?? object(shared[kind]).baseUrl ?? shared.baseUrl;
+}
+
+/**
  * Whether dictation currently transcribes through a proxy on `port`.
  *
  * Separate from the speech side on purpose: somebody may want this plugin's
@@ -40,9 +52,9 @@ async function read(): Promise<Json> {
  */
 export async function isDictationWired(port: number): Promise<boolean> {
   const config = await read();
-  const stt = object(object(object(config.providers).openai).stt);
-  const feature = object(object(object(config.features).dictation).stt);
-  return typeof stt.baseUrl === "string" && stt.baseUrl.includes(`:${port}`) && feature.provider === "openai";
+  const baseUrl = baseUrlOf(config, "dictation", "stt");
+  const site = object(object(object(config.features).dictation).stt);
+  return typeof baseUrl === "string" && baseUrl.includes(`:${port}`) && site.provider === "openai";
 }
 
 /**
@@ -61,31 +73,31 @@ export async function wireDictation(
   const config = await read();
   const before = JSON.stringify(config);
 
-  const providers = object(config.providers);
-  const openai = object(providers.openai);
   const features = object(config.features);
   const dictation = object(features.dictation);
+  const site = object(dictation.stt);
 
   if (on) {
-    openai.stt = {
-      ...object(openai.stt),
-      // Ignored by the engine, but the daemon drops the whole block without one.
+    dictation.stt = {
+      ...site,
+      provider: "openai",
+      // Ignored by the engine, but the daemon drops the whole site without one.
       apiKey: "local",
       baseUrl: `http://127.0.0.1:${port}/v1`,
+      model,
+      // The language matters more than it looks. Without it Paseo sends its own default,
+      // which is English, and the engine transcribes any other language as English —
+      // which is the exact failure this whole feature exists to remove.
+      language,
     };
-    // The language matters more than it looks. Without it Paseo sends its own default,
-    // which is English, and the engine transcribes any other language as English —
-    // which is the exact failure this whole feature exists to remove. `enabled` is the
-    // other half: the feature can be pointed here and still be switched off.
-    dictation.stt = { ...object(dictation.stt), provider: "openai", model, language };
+    // `enabled` is the other half: the feature can be pointed here and still be switched off.
     dictation.enabled = true;
   } else {
-    // Back to what Paseo ships with, rather than leaving it pointed at a dead port.
-    dictation.stt = { ...object(dictation.stt), provider: "local", model: VOICE_STT_MODEL };
+    // Back to what Paseo ships with, rather than leaving it pointed at a dead port. The
+    // local shape is strict: a leftover key or address would make the daemon refuse the site.
+    dictation.stt = { provider: "local", model: VOICE_STT_MODEL, ...(site.language ? { language: site.language } : {}) };
   }
 
-  providers.openai = openai;
-  config.providers = providers;
   features.dictation = dictation;
   config.features = features;
 
@@ -102,14 +114,9 @@ export async function wireDictation(
 /** Whether voice mode currently reads through a proxy on `port`. */
 export async function isWired(port: number): Promise<boolean> {
   const config = await read();
-  const tts = object(object(object(config.providers).openai).tts);
-  const voiceMode = object(object(config.features).voiceMode);
-  const ttsFeature = object(voiceMode.tts);
-  return (
-    typeof tts.baseUrl === "string" &&
-    tts.baseUrl.includes(`:${port}`) &&
-    ttsFeature.provider === "openai"
-  );
+  const baseUrl = baseUrlOf(config, "voiceMode", "tts");
+  const ttsFeature = object(object(object(config.features).voiceMode).tts);
+  return typeof baseUrl === "string" && baseUrl.includes(`:${port}`) && ttsFeature.provider === "openai";
 }
 
 /**
@@ -123,18 +130,6 @@ export async function wire(port: number, language: string): Promise<boolean> {
   const config = await read();
   const before = JSON.stringify(config);
 
-  const providers = object(config.providers);
-  const openai = object(providers.openai);
-  openai.tts = {
-    ...object(openai.tts),
-    // The engine ignores the credential, but the daemon drops the whole TTS block when
-    // no key is present, so a placeholder is load-bearing.
-    apiKey: "local",
-    baseUrl: `http://127.0.0.1:${port}/v1`,
-  };
-  providers.openai = openai;
-  config.providers = providers;
-
   const features = object(config.features);
   const voiceMode = object(features.voiceMode);
   voiceMode.enabled = true;
@@ -142,8 +137,11 @@ export async function wire(port: number, language: string): Promise<boolean> {
   voiceMode.tts = {
     ...object(voiceMode.tts),
     provider: "openai",
-    // Both are validated against OpenAI's own enums before the daemon will accept them.
-    // The real speaker is chosen in this plugin and substituted by the proxy.
+    // The engine ignores the credential, but the daemon drops the whole site when no key
+    // is present, so a placeholder is load-bearing.
+    apiKey: "local",
+    baseUrl: `http://127.0.0.1:${port}/v1`,
+    // Placeholders: the real speaker is chosen in this plugin and substituted by the proxy.
     model: "tts-1",
     voice: "alloy",
   };

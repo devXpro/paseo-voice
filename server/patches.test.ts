@@ -364,6 +364,32 @@ test("dictation decodes Opus the same way, once per chunk, before the stream see
   assert.ok(text.includes("codec.freeOpus(state)"), "and the decoder goes with the stream");
 });
 
+/** The speaking site's config, as Paseo 0.14 compiles it. */
+const TTS_CONFIG = `function resolveTts(site, env) {
+    const config = site?.provider === "openai" ? site : undefined;
+    const apiKey = firstString(config?.apiKey, env.OPENAI_TTS_API_KEY, env.OPENAI_API_KEY);
+    if (!apiKey)
+        return undefined;
+    const baseUrl = firstString(config?.baseUrl, env.OPENAI_TTS_BASE_URL, env.OPENAI_BASE_URL);
+    return {
+        apiKey,
+        ...(baseUrl ? { baseUrl } : {}),
+        model: firstString(env.TTS_MODEL, config?.model) ?? DEFAULT_OPENAI_TTS_MODEL,
+        voice: firstString(env.TTS_VOICE, config?.voice) ?? "alloy",
+        responseFormat: "pcm",
+    };
+}
+`;
+
+test("the agent's voice is asked for as MP3, and PCM stays one variable away", () => {
+  const outcome = patchSource(TTS_CONFIG, splicesOf("format"));
+  assert.equal(outcome.ok, true);
+  const text = outcome.ok ? outcome.text : "";
+  assert.ok(text.includes('responseFormat: process.env.PASEO_VOICE_TTS_FORMAT || "mp3",'));
+  assert.ok(!text.includes('responseFormat: "pcm"'), "the hard-coded PCM is gone");
+  assert.ok(text.includes('voice: firstString(env.TTS_VOICE, config?.voice) ?? "alloy",'), "and nothing around it moved");
+});
+
 /** The daemon's speech client, cut down to the lines the reply correction is anchored on. */
 const SPEECH_CLIENT = `export class OpenAITTS {
     constructor(openaiClient) {

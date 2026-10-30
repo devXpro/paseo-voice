@@ -42,20 +42,17 @@ test("wiring keeps every unrelated key in the config", async () => {
 test("wiring leaves an existing dictation setup untouched", async () => {
   // The exact shape this laptop runs: dictation pointed at a local Whisper with its own
   // term list. Redirecting it would be a silent downgrade of something already tuned.
-  const home = await withHome({
-    providers: { openai: { stt: { apiKey: "local", baseUrl: "http://127.0.0.1:8099/v1" } } },
-    features: { dictation: { enabled: true, stt: { provider: "openai", model: "large-v3-turbo", language: "ru" } } },
-  });
+  const dictation = {
+    enabled: true,
+    stt: { provider: "openai", apiKey: "local", baseUrl: "http://127.0.0.1:8099/v1", model: "large-v3-turbo", language: "ru" },
+  };
+  const home = await withHome({ features: { dictation } });
   const { wire } = await import("./config.server.ts");
 
   await wire(8123, "ru");
 
   const config = await readConfig(home);
-  assert.deepEqual(config.providers.openai.stt, { apiKey: "local", baseUrl: "http://127.0.0.1:8099/v1" });
-  assert.deepEqual(config.features.dictation, {
-    enabled: true,
-    stt: { provider: "openai", model: "large-v3-turbo", language: "ru" },
-  });
+  assert.deepEqual(config.features.dictation, dictation);
 });
 
 test("wiring points voice mode at the proxy and at a recogniser for the chosen language", async () => {
@@ -65,12 +62,13 @@ test("wiring points voice mode at the proxy and at a recogniser for the chosen l
   await wire(8123, "ru");
 
   const config = await readConfig(home);
-  assert.equal(config.providers.openai.tts.baseUrl, "http://127.0.0.1:8123/v1");
-  // Without a key the daemon discards the whole TTS block, so the placeholder matters.
-  assert.equal(config.providers.openai.tts.apiKey, "local");
+  assert.equal(config.features.voiceMode.tts.baseUrl, "http://127.0.0.1:8123/v1");
+  // Without a key the daemon discards the whole TTS site, so the placeholder matters.
+  assert.equal(config.features.voiceMode.tts.apiKey, "local");
+  assert.equal(config.providers, undefined, "the shared block Paseo no longer reads is not written");
   assert.equal(config.features.voiceMode.enabled, true);
   assert.equal(config.features.voiceMode.tts.provider, "openai");
-  // Both are validated against OpenAI's enums; the real speaker is substituted by the proxy.
+  // Placeholders; the real speaker is substituted by the proxy.
   assert.equal(config.features.voiceMode.tts.model, "tts-1");
   assert.equal(config.features.voiceMode.tts.voice, "alloy");
   // v2 is English-only and is the default — the reason voice mode in another language is silent.
@@ -84,7 +82,7 @@ test("wiring survives a missing config file", async () => {
 
   await wire(9000, "en");
 
-  assert.equal((await readConfig(home)).providers.openai.tts.baseUrl, "http://127.0.0.1:9000/v1");
+  assert.equal((await readConfig(home)).features.voiceMode.tts.baseUrl, "http://127.0.0.1:9000/v1");
 });
 
 test("isWired only agrees when the port is the one in the config", async () => {
@@ -149,6 +147,35 @@ test("unwiring gives Paseo its own recogniser back", async () => {
 
   const stt = (await readConfig(home)).features.dictation.stt;
   assert.equal(stt.provider, "local", "иначе диктовка указывает на мёртвый порт");
+});
+
+test("unwiring leaves no key or address on the local site, which would not accept them", async () => {
+  const home = await withHome({});
+  const { wireDictation } = await import("./config.server.ts");
+  await wireDictation(8123, true, "large-v3-turbo", "ru");
+  await wireDictation(8123, false, "large-v3-turbo", "ru");
+
+  assert.deepEqual((await readConfig(home)).features.dictation.stt, {
+    provider: "local",
+    model: "parakeet-tdt-0.6b-v3-int8",
+    language: "ru",
+  });
+});
+
+/**
+ * An update does not rewrite the file: until Paseo saves it, the address a plugin of
+ * the old kind wrote is still in the shared block, and Paseo reads it from there.
+ */
+test("an address still in the shared block counts, as it does for Paseo", async () => {
+  await withHome({
+    providers: { openai: { tts: { apiKey: "local", baseUrl: "http://127.0.0.1:8123/v1" }, stt: { apiKey: "local", baseUrl: "http://127.0.0.1:8123/v1" } } },
+    features: { voiceMode: { tts: { provider: "openai" } }, dictation: { stt: { provider: "openai" } } },
+  });
+  const { isDictationWired, isWired } = await import("./config.server.ts");
+
+  assert.equal(await isWired(8123), true);
+  assert.equal(await isDictationWired(8123), true);
+  assert.equal(await isWired(9999), false);
 });
 
 test("wiring dictation twice writes once", async () => {

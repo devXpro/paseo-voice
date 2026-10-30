@@ -11,16 +11,20 @@ Paseo daemon  ──▶  plugin proxy :8123  ──┬──▶  Google Cloud TT
 
 Paseo's TTS client is an OpenAI SDK with a hard-coded voice enum — it can only ever
 send `alloy`, `echo`, `fable`, `onyx`, `nova` or `shimmer` — and neither backend knows
-those names. The only seam for a different engine is
-`providers.openai.tts.baseUrl`.
+those names. The only seam for a different engine is the OpenAI provider's
+`baseUrl`, which Paseo 0.14 keeps on the speaking site itself,
+`features.voiceMode.tts.baseUrl`.
 
 So the proxy speaks OpenAI's shape and does four things: substitutes the chosen voice
 for whatever Paseo asked for, counts the characters against the monthly allowance,
 applies the low-pass when it is on, and answers with the headerless 24 kHz samples
 Paseo expects of `response_format: "pcm"`.
 
-**Connection** writes that `baseUrl` into `~/.paseo/config.json`, leaving dictation
-alone. Paseo resolves speech providers once at startup, so it needs a restart.
+**Connection** writes that `baseUrl` (with a placeholder key, without which the daemon
+drops the site) into `~/.paseo/config.json`, leaving dictation alone. Paseo's Voice page
+edits the same keys. Before 0.14 they sat in a shared `providers.openai` block, which
+Paseo now folds into the sites when it loads the file and drops at its next save; this
+plugin writes only the sites, and still reads the block while it is there. Paseo resolves speech providers once at startup, so it needs a restart.
 
 ### It buffers, and that is the point
 
