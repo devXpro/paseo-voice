@@ -149,15 +149,17 @@ local engine.
 
 Whisper was given the sentences before as context, and it follows their language over
 the one it is told: after one English sentence, Spanish, French, German and Russian all
-came back translated into English. The plugin starts `whisper-server` with
-`--no-context`, so each sentence is heard on its own. A recogniser that still does this
-is not one the plugin started — see what holds the port, and whether it has the flag:
+came back translated into English. whisper.cpp 1.8.3 and later hear each sentence on its
+own. For the builds before that the plugin starts `whisper-server` with `--no-context`,
+passed only when `whisper-server --help` lists it. A recogniser that still does this is
+not one the plugin started — see what holds the port, and whether it has the flag:
 
 ```sh
 ps -o args= -p "$(lsof -tiTCP:8125 -sTCP:LISTEN)"
 ```
 
-Without it, it is one left behind; the next entry replaces it.
+Without it, on an engine older than 1.8.3, it is one left behind; the next entry
+replaces it.
 
 ## Dictation is on, and every dictated sentence fails
 
@@ -168,6 +170,17 @@ could do this: the process being replaced ended after its successor had started,
 exit cleared the books for both. Since 0.9.0 a restart waits for the old process to let
 go of the port, and a later change — of the language, say — overtakes an earlier one
 instead of starting beside it.
+
+An engine that refuses an argument looks the same. Up to 0.11.0 the plugin always passed
+`--no-context`, which whisper.cpp 1.8.3 and later do not know: the server printed its
+usage and ended with exit code 0, so there was nothing to send to — and a `whisper-server`
+already on the port could answer the plugin's check in its place. Since 0.11.1 the flag
+goes only to a build that lists it, and an engine that ends on its own is written to the
+log with the reason it gave, which is also what the panel shows:
+
+```sh
+grep -a 'voice: whisper-server exited' ~/.paseo/daemon.log | tail -3
+```
 
 One left behind — by an older version, or by a daemon that was killed outright — holds
 the port until it is stopped:

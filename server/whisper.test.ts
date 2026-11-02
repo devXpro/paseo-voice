@@ -19,35 +19,63 @@ import { after, before, test } from "node:test";
  */
 let home = "";
 let engine = "";
+/** The build before whisper.cpp 1.8.3: it lists `--no-context` in its help and takes it. */
+let legacy = "";
 /** One whose weights will not load: it says so on stderr, as the real one does, and goes. */
 let broken = "";
+/** One that refuses an argument: the complaint first, then the whole usage, then exit code 0. */
+let refusing = "";
 let createRecogniser: typeof import("./whisper.server.ts").createRecogniser;
 
 const MODEL = "large-v3-turbo-q8_0";
 const ledger = () => path.join(home, "ledger");
 
-before(async () => {
-  home = await mkdtemp(path.join(tmpdir(), "paseo-voice-whisper-"));
-  process.env.HOME = home;
-  const models = path.join(home, ".paseo-voice", "models", "whisper");
-  await mkdir(models, { recursive: true });
-  // Sparse: the size the check wants, none of the disk.
-  const weights = await open(path.join(models, "ggml-large-v3-turbo-q8_0.bin"), "w");
-  await weights.truncate(874_188_075);
-  await weights.close();
-  engine = path.join(home, "fake-whisper-server.mjs");
-  await writeFile(
-    engine,
-    `#!/usr/bin/env node
+/**
+ * A stand-in `whisper-server` that reads its arguments as the real one does: one it does
+ * not know ends it, with the complaint and then the whole usage on stderr and an exit code
+ * of 0. That is what happened when whisper.cpp 1.8.3 dropped `--no-context` and the plugin
+ * went on passing it — a stand-in that took any argument never saw it.
+ */
+const standIn = (older: boolean) => `#!/usr/bin/env node
 import { appendFileSync, writeSync } from "node:fs";
 import { createServer } from "node:http";
+const OLDER = ${older};
 const args = process.argv.slice(2);
 const value = (name) => args[args.indexOf(name) + 1];
 const note = (what) => appendFileSync(${JSON.stringify(ledger())}, [process.pid, value("--port"), what].join(" ") + "\\n");
+const usage = () => writeSync(2, [
+  "usage: whisper-server [options]",
+  "options:",
+  "  -h,  --help       show this help message and exit",
+  ...(OLDER ? ["  -nc, --no-context [false  ] do not use previous audio context"] : []),
+  "  -vm FNAME, --vad-model FNAME  VAD model path",
+  "",
+].join("\\n"));
+const TAKE_A_VALUE = ["--model", "--host", "--port", "--language", "--threads", "--prompt"];
+for (let at = 0; at < args.length; at += 1) {
+  if (args[at] === "--help" || args[at] === "-h") {
+    usage();
+    process.exit(0);
+  }
+  if (TAKE_A_VALUE.includes(args[at])) {
+    at += 1;
+  } else if (!(OLDER && args[at] === "--no-context")) {
+    writeSync(2, "error: unknown argument: " + args[at] + "\\n");
+    usage();
+    process.exit(0);
+  }
+}
 note("started");
+if (args.includes("--no-context")) {
+  note("no-context");
+}
 // Its whole log goes to stderr, as the real one's does.
 writeSync(2, "whisper_init_state: compute buffer (decode) =  100.03 MB\\n");
 const server = createServer((request, response) => {
+  // The real one prints to stdout for every request, and a pipe nobody reads fills up.
+  if (request.headers["x-chatty"]) {
+    writeSync(1, "x".repeat(300_000) + "\\n");
+  }
   response.writeHead(200, { "content-type": "application/json" });
   response.end(JSON.stringify({ text: "language=" + value("--language") }));
 });
@@ -59,9 +87,21 @@ server.on("error", () => {
 setTimeout(() => server.listen(Number(value("--port")), "127.0.0.1"), 150);
 // Going: the port is held a little after being told, as a process shutting down does.
 process.on("SIGTERM", () => setTimeout(() => process.exit(0), 300));
-`,
-    { mode: 0o755 },
-  );
+`;
+
+before(async () => {
+  home = await mkdtemp(path.join(tmpdir(), "paseo-voice-whisper-"));
+  process.env.HOME = home;
+  const models = path.join(home, ".paseo-voice", "models", "whisper");
+  await mkdir(models, { recursive: true });
+  // Sparse: the size the check wants, none of the disk.
+  const weights = await open(path.join(models, "ggml-large-v3-turbo-q8_0.bin"), "w");
+  await weights.truncate(874_188_075);
+  await weights.close();
+  engine = path.join(home, "fake-whisper-server.mjs");
+  await writeFile(engine, standIn(false), { mode: 0o755 });
+  legacy = path.join(home, "legacy-whisper-server.mjs");
+  await writeFile(legacy, standIn(true), { mode: 0o755 });
   broken = path.join(home, "broken-whisper-server.mjs");
   await writeFile(
     broken,
@@ -72,6 +112,17 @@ setTimeout(() => {
   writeSync(2, "error: failed to load the model\\n");
   process.exit(1);
 }, 100);
+`,
+    { mode: 0o755 },
+  );
+  refusing = path.join(home, "refusing-whisper-server.mjs");
+  await writeFile(
+    refusing,
+    `#!/usr/bin/env node
+import { writeSync } from "node:fs";
+writeSync(2, "error: unknown argument: --frobnicate\\n");
+writeSync(2, "usage: whisper-server [options]\\noptions:\\n  -h,  --help       show this help message and exit\\n  -vm FNAME, --vad-model FNAME  VAD model path\\n");
+process.exit(0);
 `,
     { mode: 0o755 },
   );
@@ -191,6 +242,63 @@ test("an engine that dies while loading fails the start, and says why", { timeou
     await assert.rejects(recogniser.ensure(MODEL, "en", ""), /failed to load the model/);
     assert.equal(recogniser.running(), false);
     assert.equal(recogniser.lastError(), "error: failed to load the model");
+  } finally {
+    recogniser.stop();
+  }
+});
+
+test("an engine that no longer takes --no-context is not given it, an older one that lists it is", { timeout: 10_000 }, async () => {
+  const newerPort = 23_000 + Math.floor(Math.random() * 1000);
+  const olderPort = 24_000 + Math.floor(Math.random() * 1000);
+  const newer = createRecogniser({ port: newerPort, engine: async () => engine });
+  const older = createRecogniser({ port: olderPort, engine: async () => legacy });
+  try {
+    await newer.ensure(MODEL, "en", "");
+    await older.ensure(MODEL, "en", "");
+    assert.equal(newer.running(), true);
+    assert.equal(older.running(), true);
+    // Whisper carries on in the language of the sentences before it unless it is told not
+    // to, so the build that has the flag must be given it.
+    assert.deepEqual((await entries(newerPort)).map(({ what }) => what), ["started"]);
+    assert.deepEqual((await entries(olderPort)).map(({ what }) => what).sort(), ["no-context", "started"]);
+  } finally {
+    newer.stop();
+    older.stop();
+  }
+});
+
+test("an engine that refuses an argument fails the start with the refusal, not the end of its help", { timeout: 10_000 }, async () => {
+  const port = 25_000 + Math.floor(Math.random() * 1000);
+  const lines: string[] = [];
+  const recogniser = createRecogniser({ port, engine: async () => refusing, log: (line) => lines.push(line) });
+  try {
+    await assert.rejects(recogniser.ensure(MODEL, "en", ""), /error: unknown argument: --frobnicate/);
+    assert.equal(recogniser.lastError(), "error: unknown argument: --frobnicate");
+    // Its going is in the daemon's log too, with the reason.
+    assert.ok(
+      lines.some((line) => line.includes("whisper-server exited") && line.includes("--frobnicate")),
+      lines.join("\n"),
+    );
+  } finally {
+    recogniser.stop();
+  }
+});
+
+test("an engine's output on stdout, which nobody reads, never stops it answering", { timeout: 10_000 }, async () => {
+  const port = 26_000 + Math.floor(Math.random() * 1000);
+  const recogniser = createRecogniser({ port, engine: async () => engine });
+  try {
+    await recogniser.ensure(MODEL, "en", "");
+    // The real one prints three lines for every request. A pipe that is never read fills
+    // up after a few of them and holds the whole server.
+    for (let request = 0; request < 3; request += 1) {
+      const answer = await fetch(`http://127.0.0.1:${port}/inference`, {
+        method: "POST",
+        headers: { "x-chatty": "1" },
+        signal: AbortSignal.timeout(2_000),
+      });
+      assert.equal(answer.status, 200);
+    }
   } finally {
     recogniser.stop();
   }

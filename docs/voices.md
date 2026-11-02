@@ -29,10 +29,13 @@ the plugin's own dictation engine restarts, which takes a second. One engine at 
 the new one waits for the old one to let go of the port, and a change made before the
 last one is up takes its place rather than starting beside it.
 
-**Each dictated sentence is heard on its own.** The engine runs with `--no-context`:
-given the sentences before as context, Whisper carries on in their language whatever
-it is told — after one English sentence, Spanish, French, German and Russian all came
-back translated into English. The dictionary still goes with every sentence.
+**Each dictated sentence is heard on its own.** Given the sentences before as context,
+Whisper carries on in their language whatever it is told — after one English sentence,
+Spanish, French, German and Russian all came back translated into English. whisper.cpp
+1.8.3 and later hear every request without context already. For the builds before that
+the plugin starts the engine with `--no-context`, and passes it only when the engine's
+`--help` lists it: a later build refuses an argument it does not know. The dictionary
+still goes with every sentence.
 
 **An accent's voices are its own.** Asked for `fr-CA`, Google also lists `fr-FR` voices
 that can read it — with a French accent. The list here keeps only the accent's own.

@@ -62,7 +62,7 @@ documentation that cannot go stale without going red.
 
 ## What the tests cover
 
-178 of them, all `node:test`, no framework and no mocking library.
+181 of them, all `node:test`, no framework and no mocking library.
 
 The ones worth knowing about:
 
@@ -79,8 +79,14 @@ The ones worth knowing about:
   that takes a moment to load and a moment to go, as the real one does: one engine on
   the port after a restart, after two overlapping ones, and none after a stop during a
   start; its log on stderr is not a failure while it runs, and a death while loading
-  fails the start with the reason it gave. Every stand-in writes down its pid and the file
-  kills whatever is left, so a lost process fails the test instead of hanging it.
+  fails the start with the reason it gave. The stand-in reads its arguments as the real
+  one does — one it does not know ends it with its usage and an exit code of 0, which is
+  how a flag whisper.cpp 1.8.3 dropped went unseen — and a second one stands for the
+  builds before, which list `--no-context`: the flag must reach that one and not the
+  other. An engine that refuses an argument fails the start with the refusal rather than
+  the end of its help, and a stdout nobody reads does not stop it. Every stand-in writes
+  down its pid and the file kills whatever is left, so a lost process fails the test
+  instead of hanging it.
 
 There is no test that needs a Google key or a network.
 

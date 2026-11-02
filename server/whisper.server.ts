@@ -180,6 +180,24 @@ export type Recogniser = {
 };
 
 /**
+ * Whether this build of `whisper-server` lists `--no-context` in its help.
+ *
+ * Up to whisper.cpp 1.8.2 the server carries every earlier transcript into the next
+ * request unless it is told not to, and the flag is how. From 1.8.3 each request is heard
+ * on its own already and the flag is gone: an argument the server does not know makes it
+ * print its usage and exit with code 0, and the recogniser never comes up. So the help is
+ * asked, and the flag goes only to the builds that have it.
+ */
+function listsNoContext(binary: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    // The usage is written to stderr. A binary that will not even print it lists nothing.
+    execFile(binary, ["--help"], { timeout: 10_000 }, (_error, out, stderr) => {
+      resolve(`${out}\n${stderr}`.includes("--no-context"));
+    });
+  });
+}
+
+/**
  * The `whisper-server` process.
  *
  * Kept warm once started: loading the weights takes seconds and a cold start on every
@@ -264,6 +282,7 @@ export function createRecogniser(options: {
       }
       // Two fewer than the cores, so dictating does not make everything else stutter.
       const threads = Math.max(2, (await cores()) - 2);
+      const noContext = await listsNoContext(binary);
       await leaving;
       // From this check to `child = started` nothing may wait: two starts that both got
       // past it used to both start, and the one that lost the port left the other running
@@ -279,28 +298,39 @@ export function createRecogniser(options: {
           "--host", "127.0.0.1",
           "--port", String(port),
           "--language", language,
-          // Each request on its own. Without this the server keeps every earlier
-          // transcript as context for the next, and Whisper continues in the language of
-          // that context whatever language it is told: after one English sentence,
-          // Spanish, French, German and Russian all came back translated into English.
-          // Only the past goes; the dictionary prompt is still given to every request.
-          "--no-context",
+          // Each request on its own. Left to keep every earlier transcript as context for
+          // the next, Whisper continues in the language of that context whatever language
+          // it is told: after one English sentence, Spanish, French, German and Russian
+          // all came back translated into English. Only the past goes; the dictionary
+          // prompt is still given to every request. Builds up to 1.8.2 need the flag for
+          // it; later ones do it already and refuse the flag, so it goes to those that list it.
+          ...(noContext ? ["--no-context"] : []),
           "--threads", String(threads),
           // Words it should expect to hear. Whisper leans on this when a sound could
           // be either of two words, which is most of what goes wrong with jargon.
           ...(prompt.trim() ? ["--prompt", prompt.trim()] : []),
         ],
-        { stdio: ["ignore", "pipe", "pipe"] },
+        // Its stdout is never read, and it prints three lines there for every request: a
+        // pipe that fills up holds the whole server. Only stderr, which carries its log, is kept.
+        { stdio: ["ignore", "ignore", "pipe"] },
       );
       child = started;
       // whisper-server writes its whole log to stderr, so a line there is no failure while
       // it runs — the panel used to show "whisper_init_state: compute buffer…" as one.
-      // When it ends on its own, the last line is what says why.
+      // When it ends on its own, what it complained of says why, and failing that the last
+      // line does. An argument it refuses is followed by its whole usage, so the last line
+      // alone would be the end of the help.
       let said = "";
+      let complaint = "";
       started.stderr?.on("data", (chunk: Buffer) => {
-        const line = chunk.toString("utf8").trim();
-        if (line) {
-          said = line.split("\n").slice(-1)[0] ?? "";
+        for (const line of chunk.toString("utf8").split("\n")) {
+          const text = line.trim();
+          if (text) {
+            said = text;
+            if (/^error/i.test(text)) {
+              complaint = text;
+            }
+          }
         }
       });
       // Only the one in charge may clear the books. A process being replaced ends after its
@@ -310,7 +340,8 @@ export function createRecogniser(options: {
         if (child !== started) {
           return;
         }
-        failure = said || msg("whisper.exited", { code: code ?? signal ?? "" });
+        failure = complaint || said || msg("whisper.exited", { code: code ?? signal ?? "" });
+        log(`voice: whisper-server exited with ${code ?? signal}: ${failure}`);
         child = null;
         loaded = "";
       });
