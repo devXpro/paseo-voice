@@ -1,5 +1,4 @@
-import { type Stats, statSync } from "node:fs";
-import { open } from "node:fs/promises";
+import { closeSync, openSync, readSync, type Stats, statSync, writeSync } from "node:fs";
 import { msg } from "../shared/i18n/index.ts";
 
 /**
@@ -35,13 +34,20 @@ export function statOnDisk(file: string): Stats {
  * Electron routes `fs` through its own asar reader for any path containing `.asar`,
  * which turns a plain read of the archive itself into ENOENT. This switch turns that
  * interception off for the duration of the call.
+ *
+ * Synchronous, like `statOnDisk`, and that is the point: while the switch is off, every
+ * file the host loads out of its archive is missing. Paseo 0.15 sends the plugin's
+ * `fetch` through undici from that archive, and undici loads its HTTP parser from there
+ * on the first response. Held across an `await`, the switch let that response land in
+ * the gap: the parser was not found, and every request of the process failed from then
+ * on — the recogniser's readiness check, so dictation never came up, and the voices too.
  */
-async function withoutAsar<T>(work: () => Promise<T>): Promise<T> {
+function withoutAsar<T>(work: () => T): T {
   const host = process as { noAsar?: boolean };
   const previous = host.noAsar;
   host.noAsar = true;
   try {
-    return await work();
+    return work();
   } finally {
     host.noAsar = previous;
   }
@@ -55,8 +61,8 @@ export type Archive = { path: string; header: Node; dataOffset: number };
 export type Entry = { offset: number; size: number };
 
 export async function readArchive(file: string): Promise<Archive> {
-  return withoutAsar(async () => {
-    const handle = await open(file, "r");
+  return withoutAsar(() => {
+    const handle = openSync(file, "r");
     try {
       /**
        * Two nested pickles, and the nesting is the trap. Each pickle begins with its
@@ -65,18 +71,18 @@ export async function readArchive(file: string): Promise<Archive> {
        * four bytes early yields a parse error on what looks like valid data.
        */
       const sizes = Buffer.alloc(8);
-      await handle.read(sizes, 0, 8, 0);
+      readSync(handle, sizes, 0, 8, 0);
       const headerSize = sizes.readUInt32LE(4);
       if (headerSize <= 8 || headerSize > 64 * 1024 * 1024) {
         throw new Error(msg("asar.notAsar", { size: headerSize }));
       }
       const pickle = Buffer.alloc(headerSize);
-      await handle.read(pickle, 0, headerSize, 8);
+      readSync(handle, pickle, 0, headerSize, 8);
       const jsonSize = pickle.readUInt32LE(4);
       const header = JSON.parse(pickle.subarray(8, 8 + jsonSize).toString("utf8")) as Node;
       return { path: file, header, dataOffset: 8 + headerSize };
     } finally {
-      await handle.close();
+      closeSync(handle);
     }
   });
 }
@@ -101,14 +107,14 @@ export function locate(archive: Archive, entryPath: string): Entry | null {
 }
 
 export async function readEntry(file: string, entry: Entry): Promise<Buffer> {
-  return withoutAsar(async () => {
-    const handle = await open(file, "r");
+  return withoutAsar(() => {
+    const handle = openSync(file, "r");
     try {
       const bytes = Buffer.alloc(entry.size);
-      await handle.read(bytes, 0, entry.size, entry.offset);
+      readSync(handle, bytes, 0, entry.size, entry.offset);
       return bytes;
     } finally {
-      await handle.close();
+      closeSync(handle);
     }
   });
 }
@@ -122,12 +128,12 @@ export async function writeEntry(file: string, entry: Entry, bytes: Buffer): Pro
   if (bytes.length !== entry.size) {
     throw new Error(msg("asar.sizeMismatch", { bytes: bytes.length, size: entry.size }));
   }
-  await withoutAsar(async () => {
-    const handle = await open(file, "r+");
+  withoutAsar(() => {
+    const handle = openSync(file, "r+");
     try {
-      await handle.write(bytes, 0, bytes.length, entry.offset);
+      writeSync(handle, bytes, 0, bytes.length, entry.offset);
     } finally {
-      await handle.close();
+      closeSync(handle);
     }
   });
 }

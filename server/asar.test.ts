@@ -92,3 +92,31 @@ test("something that is not an archive is rejected", async () => {
   await writeFile(file, Buffer.alloc(64, 0));
   await assert.rejects(() => readArchive(file));
 });
+
+/**
+ * While asar support is off, every file Paseo's host loads out of its archive is missing,
+ * and since Paseo 0.15 that includes the HTTP parser its `fetch` loads on the first
+ * response. So no other code may run in that window: a timer that fires between the
+ * steps of a read sees the switch off, and that is the failure this pins down.
+ */
+test("nothing else runs while asar support is off, and it is back on afterwards", async () => {
+  const file = await buildArchive({ "a.js": "aaaa", "b.js": "bbbbbb" });
+  const host = process as { noAsar?: boolean };
+  const seen: Array<boolean | undefined> = [];
+  const watch = setInterval(() => seen.push(host.noAsar), 0);
+  try {
+    for (let round = 0; round < 20; round += 1) {
+      const archive = await readArchive(file);
+      const entry = locate(archive, "b.js")!;
+      await Promise.all([readEntry(file, entry), readArchive(file), writeEntry(file, entry, Buffer.from("cccccc"))]);
+      await new Promise((wake) => setImmediate(wake));
+    }
+  } finally {
+    clearInterval(watch);
+  }
+  assert.ok(seen.length > 0, "the watch must have had its chances to look");
+  assert.ok(!seen.includes(true), "asar support was off while other code ran");
+  assert.equal(host.noAsar, undefined, "and it is left as it was found");
+  await assert.rejects(readArchive(path.join(path.dirname(file), "absent.asar")));
+  assert.equal(host.noAsar, undefined, "a failed read puts it back too");
+});
