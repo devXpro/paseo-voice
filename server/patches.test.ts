@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdtemp, readFile, rm, utimes, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, utimes, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
@@ -9,6 +9,7 @@ import { pathToFileURL } from "node:url";
 import { type Archive, locate, readArchive, readEntry } from "./asar.server.ts";
 import {
   asarIntegrityOn,
+  chooseFile,
   fingerprintOf,
   fit,
   judge,
@@ -449,6 +450,162 @@ test("a sentence is labelled by what came back, and the daemon tells the proxy s
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
+});
+
+/** The daemon's push service, whole, as Paseo 0.15.2 compiles it. */
+const PUSH_SERVICE = `const EXPO_PUSH_URL = "https://exp.host/--/api/v2/push/send";
+const MAX_BATCH_SIZE = 100;
+/**
+ * Service for sending Expo push notifications.
+ * Handles batching and invalid token removal.
+ */
+export class PushService {
+    constructor(logger, revokeToken) {
+        this.logger = logger.child({ component: "push-service" });
+        this.revokeToken = revokeToken;
+    }
+    async sendPush(tokens, payload) {
+        if (tokens.length === 0) {
+            return;
+        }
+        const messages = tokens.map((token) => ({
+            to: token,
+            title: payload.title,
+            body: payload.body,
+            data: payload.data,
+            sound: "default",
+        }));
+        // Batch tokens (max 100 per request per Expo limits)
+        const batches = [];
+        for (let i = 0; i < messages.length; i += MAX_BATCH_SIZE) {
+            batches.push(messages.slice(i, i + MAX_BATCH_SIZE));
+        }
+        await Promise.all(batches.map((batch) => this.sendBatch(batch)));
+    }
+    async sendBatch(messages) {
+        try {
+            const response = await fetch(EXPO_PUSH_URL, {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                    Accept: "application/json",
+                },
+                body: JSON.stringify(messages),
+            });
+            if (!response.ok) {
+                this.logger.error({ status: response.status, statusText: response.statusText }, "Expo push API error");
+                return;
+            }
+            const result = (await response.json());
+            this.handleTickets(messages, result.data);
+        }
+        catch (error) {
+            this.logger.error({ err: error }, "Failed to send push notifications");
+        }
+    }
+    handleTickets(messages, tickets) {
+        for (let i = 0; i < tickets.length; i++) {
+            const ticket = tickets[i];
+            const message = messages[i];
+            if (ticket.status === "error") {
+                this.logger.error({ token: message.to, message: ticket.message, details: ticket.details }, "Push failed for token");
+                // Remove invalid tokens
+                if (ticket.details?.error === "DeviceNotRegistered" ||
+                    ticket.details?.error === "InvalidCredentials") {
+                    this.revokeToken(message.to);
+                }
+            }
+        }
+    }
+}
+//# sourceMappingURL=push-service.js.map`;
+
+type Pushed = { to: string }[];
+type PushServiceClass = new (
+  logger: unknown,
+  revoke: (token: string) => void,
+) => { sendPush(tokens: string[], payload: { title: string; body: string }): Promise<void> };
+
+const PHONE = `apns:development:sh.paseo.debug.team:${"a1".repeat(32)}`;
+const EXPO = "ExponentPushToken[xxxxxxxxxxxxxxxxxxxxxx]";
+
+/**
+ * Runs the corrected push service as the daemon would, with HOME pointing at a folder
+ * that holds the given sender (or none), and Expo answered on the spot. Says what the
+ * sender was handed, what went to Expo, and what was logged.
+ */
+async function pushThrough(tokens: string[], sender: string | null) {
+  const outcome = patchSource(PUSH_SERVICE, splicesOf("push"));
+  assert.equal(outcome.ok, true);
+  const fitted = fit(outcome.ok ? outcome.text : "", Buffer.byteLength(PUSH_SERVICE));
+  assert.ok(fitted, "the correction fits into the file it replaces");
+  const dir = await mkdtemp(path.join(tmpdir(), "voice-push-service-"));
+  const home = path.join(dir, "home");
+  const file = path.join(dir, "push-service.mjs");
+  const [savedHome, savedFetch] = [process.env.HOME, globalThis.fetch];
+  const toExpo: Pushed[] = [];
+  const errors: string[] = [];
+  const logger = { child: () => logger, info: () => {}, error: (_: unknown, text: string) => errors.push(text) };
+  try {
+    await writeFile(file, fitted ?? "");
+    if (sender !== null) {
+      await mkdir(path.join(home, ".paseo-voice", "push"), { recursive: true });
+      await writeFile(path.join(home, ".paseo-voice", "push", "apns.mjs"), sender);
+    }
+    process.env.HOME = home;
+    globalThis.fetch = (async (_url: string, init: { body: string }) => {
+      const messages = JSON.parse(init.body) as Pushed;
+      toExpo.push(messages);
+      return new Response(JSON.stringify({ data: messages.map(() => ({ status: "ok" })) }));
+    }) as typeof fetch;
+    const { PushService } = (await import(pathToFileURL(file).href)) as { PushService: PushServiceClass };
+    await new PushService(logger, () => {}).sendPush(tokens, { title: "Agent finished", body: "Open the agent" });
+    const handed = (globalThis as { paseoVoiceRouted?: string[] }).paseoVoiceRouted ?? null;
+    return { handed, toExpo: toExpo.flat().map((message) => message.to), errors };
+  } finally {
+    process.env.HOME = savedHome;
+    globalThis.fetch = savedFetch;
+    delete (globalThis as { paseoVoiceRouted?: string[] }).paseoVoiceRouted;
+    await rm(dir, { recursive: true, force: true });
+  }
+}
+
+/** Stands in for the sender this plugin writes: notes what it was given, sends nothing. */
+const STUB_SENDER = `export async function route(tokens, payload, service) {
+  globalThis.paseoVoiceRouted = tokens;
+  if (!service.logger || !service.revokeToken) throw new Error("the service was not handed over");
+  return tokens.filter((token) => !token.startsWith("apns:"));
+}
+`;
+
+test("a phone this plugin built gets its push from Apple, and every other token still goes to Expo", async () => {
+  const { handed, toExpo, errors } = await pushThrough([PHONE, EXPO], STUB_SENDER);
+  assert.deepEqual(handed, [PHONE, EXPO], "the sender sees every token and picks its own");
+  assert.deepEqual(toExpo, [EXPO], "Expo gets only what it can deliver");
+  assert.deepEqual(errors, []);
+});
+
+test("with no phone of this plugin's among the tokens the sender is not even loaded", async () => {
+  const { handed, toExpo } = await pushThrough([EXPO], STUB_SENDER);
+  assert.equal(handed, null);
+  assert.deepEqual(toExpo, [EXPO]);
+});
+
+test("a sender that is not there is logged, and the phone's token is still kept away from Expo", async () => {
+  const { toExpo, errors } = await pushThrough([PHONE, EXPO], null);
+  assert.deepEqual(toExpo, [EXPO]);
+  assert.deepEqual(errors, ["paseo-voice: the APNs sender did not load"]);
+});
+
+test("of several bundles under one name the one the page loads is the one patched", () => {
+  const main = "index-70b2addcd0a87f9862ada37a54e1c5f5.js";
+  const chunk = "index-25b6f4047ab2ce7c0c005067298ad2bc.js";
+  const page = `<script src="/_expo/static/js/web/${main}" defer></script>`;
+  assert.equal(chooseFile([chunk, main], page), main, "not the scanner chunk that sorts first");
+  assert.equal(chooseFile([main], ""), main, "one is it, page or no page");
+  assert.equal(chooseFile([chunk, main], "<html></html>"), "", "a page that names none settles nothing");
+  assert.equal(chooseFile([chunk, main], `${page}<script src="${chunk}"></script>`), "", "nor one that names both");
+  assert.equal(chooseFile([], page), "");
 });
 
 /** The source Paseo plays the cue from, as Metro minifies it. */

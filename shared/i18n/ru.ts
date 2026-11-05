@@ -173,6 +173,8 @@ export const ru: Dictionary = {
   "patch.session.note": "Ответы агента снова звучат после нераспознанной фразы; голос с телефона принимается сжатым, в Opus",
   "patch.dictation.title": "Диктовка в Opus",
   "patch.dictation.note": "Голос с телефона при диктовке принимается сжатым, в Opus",
+  "patch.push.title": "Пуши прямо от Apple",
+  "patch.push.note": "Телефон, собранный этим плагином, получает уведомления прямо от Apple, по собственному ключу",
   "patch.cue.title": "Своя музыка ожидания",
   "patch.cue.note": "Ставит в десктопный Paseo звук, выбранный в разделе «Звук ожидания»",
   "patch.archive.title": "Архив Paseo",

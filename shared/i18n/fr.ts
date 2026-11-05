@@ -174,6 +174,8 @@ export const fr: Dictionary = {
     "Les réponses de l’agent se font de nouveau entendre après une phrase incomprise ; la voix du téléphone est reçue compressée, en Opus",
   "patch.dictation.title": "Dictée en Opus",
   "patch.dictation.note": "Pendant la dictée, la voix du téléphone est reçue compressée, en Opus",
+  "patch.push.title": "Notifications directes d’Apple",
+  "patch.push.note": "Un téléphone compilé avec ce plugin reçoit ses notifications directement d’Apple, avec votre propre clé",
   "patch.cue.title": "Votre propre musique d’attente",
   "patch.cue.note": "Installe dans l’app de bureau Paseo le son choisi dans « Son d’attente »",
   "patch.archive.title": "Archive de Paseo",

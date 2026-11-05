@@ -56,9 +56,7 @@ compile — see [e2e.md](e2e.md#trying-a-fix-before-it-ships).
    something. Then raises the pods left below the app's deployment target, for
    [Xcode 27](#xcode-27).
 6. **Builds**, `-configuration Release`. Debug produces a dev client that looks for a
-   Metro server and shows "No development servers found" on a phone. With
-   [Xcode 27](#xcode-27) the binary is then marked as built with SDK 26.2 and signed
-   again.
+   Metro server and shows "No development servers found" on a phone.
 7. **Installs** on a connected device with `xcrun devicectl`, if one is there. Xcode 26
    lists a phone by a UUID and Xcode 27 by its UDID; both are found.
 
@@ -96,6 +94,10 @@ compile — see [e2e.md](e2e.md#trying-a-fix-before-it-ships).
   sentences — over somebody who had cut in, and after voice mode was turned off.
   `release` stops it and frees it at once; it is used however playback ends, so no
   player waits for the garbage collector either. `e2e/cut-in.e2e.ts` is red without it.
+- **Pushes reach the phone.** Upstream registers an Expo push token in Paseo's own
+  Expo project, which has no key for this build's bundle id, so no push ever arrived.
+  The phone registers its own APNs token instead, and the plugin's correction in the
+  daemon sends to it straight from Apple. Needs a paid team; see [Push](#push).
 - **The test pinning the old tone's length** is skipped, or it fails the build.
 - **The bundle identifier** becomes `sh.paseo.debug.<team>`. Plain `sh.paseo.debug` is
   already registered to Paseo's own team and cannot be claimed.
@@ -106,8 +108,7 @@ correction no longer fits.
 
 ## Xcode 27
 
-Its iOS SDK changed two things, and `build.sh` handles both. With Xcode 26 neither step
-changes anything.
+Its iOS SDK changed two things. With Xcode 26 neither matters.
 
 **A deployment target below iOS 15.0 is an error**, where Xcode 26 only warned. React
 Native's post-install raises every pod to its minimum but skips the pods' resource
@@ -120,12 +121,9 @@ unless `ios.deploymentTarget` says otherwise). If the Podfile has no single
 **An app without scenes does not launch.** Built with SDK 27, an app that has not
 adopted the scene life cycle closes the moment it opens: UIKit traps in
 `_UIApplicationEvaluateRuntimeIssueForNoSceneLifecycleAdoption`, and the crash report
-says `EXC_BREAKPOINT`. Paseo has not adopted scenes yet (Expo 54). UIKit goes by the SDK
-written into the binary, not by the iOS it runs on, so the same app built with SDK 26
-runs on iOS 27. After the build the script marks the binary as built with SDK 26.2
-(`vtool -set-build-version`) and signs it again with the identity and entitlements Xcode
-gave it. It does this only when the SDK is 27 or later and `Info.plist` declares no
-`UIApplicationSceneManifest`, so the step turns itself off once Paseo moves to scenes.
+says `EXC_BREAKPOINT`. Paseo adopted scenes in 0.14, so nothing is needed for it any
+more. Plugin versions up to 0.11.1 marked the binary as built with SDK 26.2 and signed
+it again; that step is in their `build.sh`, for building an older Paseo.
 
 ## Signing
 
@@ -144,10 +142,34 @@ Run the build again; with the Apple ID signed in, `-allowProvisioningUpdates` ge
 profile. Without one it stops at «No Accounts».
 
 Push notifications are removed from the entitlements, because a personal team cannot
-sign them. Set `KEEP_PUSH=1` to keep them if you have a real team.
+sign them. With a paid team, see [Push](#push).
 
 On first launch the phone will not trust the certificate:
 **Settings → General → VPN & Device Management → your Apple ID → Trust.**
+
+## Push
+
+Pushes need a paid team: a personal one cannot sign the entitlement. Then:
+
+1. **The App ID** `sh.paseo.debug.<team>` gets the Push Notifications capability, and
+   the profile is made after that, so it carries `aps-environment`. With an Apple ID in
+   Xcode, `-allowProvisioningUpdates` does both.
+2. **An APNs key**, made once under Certificates, Identifiers & Profiles → Keys with
+   Apple Push Notifications service on. One key serves every app of the team.
+3. **`~/.paseo-voice/push.json`** names it; the key stays in its own file:
+
+   ```json
+   { "keyId": "ABC123DEFG", "teamId": "TEAM123456", "keyFile": "/path/to/AuthKey_ABC123DEFG.p8" }
+   ```
+
+4. **Build with `KEEP_PUSH=1 ./build.sh`.** The entitlement stays, and the phone asks for
+   permission to notify the first time it connects.
+
+The phone registers its own APNs token, and the plugin's correction in the daemon sends
+to it straight from Apple; how is in [patches.md](patches.md#pushes-straight-from-apple).
+When a push goes is the daemon's call, as upstream: only when no app has been in use for
+three minutes. In `~/.paseo/daemon.log` a delivered one reads `paseo-voice: push handed
+to APNs`, and a refused one says what Apple answered.
 
 ## Making an .ipa to hand to somebody
 

@@ -185,6 +185,8 @@ export const en = {
     "The agent's answers are heard again after a phrase nobody understood; the phone's voice is taken compressed, as Opus",
   "patch.dictation.title": "Dictation in Opus",
   "patch.dictation.note": "The phone's voice is taken compressed, as Opus, while dictating",
+  "patch.push.title": "Pushes straight from Apple",
+  "patch.push.note": "A phone built by this plugin gets its notifications straight from Apple, with your own key",
   "patch.cue.title": "Your own waiting music",
   "patch.cue.note": "Puts the sound chosen under Waiting sound into desktop Paseo",
   "patch.archive.title": "Paseo's archive",

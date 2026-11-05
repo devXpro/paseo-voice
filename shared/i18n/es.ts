@@ -174,6 +174,8 @@ export const es: Dictionary = {
     "Las respuestas del agente vuelven a oírse tras una frase que no se entendió; la voz del teléfono se recibe comprimida, en Opus",
   "patch.dictation.title": "Dictado en Opus",
   "patch.dictation.note": "Al dictar, la voz del teléfono se recibe comprimida, en Opus",
+  "patch.push.title": "Avisos directos de Apple",
+  "patch.push.note": "Un teléfono compilado con este plugin recibe sus notificaciones directamente de Apple, con tu propia clave",
   "patch.cue.title": "Tu propia música de espera",
   "patch.cue.note": "Hace que Paseo de escritorio use el sonido elegido en «Sonido de espera»",
   "patch.archive.title": "Archivo de Paseo",

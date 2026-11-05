@@ -460,6 +460,51 @@ ${LOAD_CODEC}`,
 ];
 
 /**
+ * Pushes for a phone built by `ios-build/`, straight from Apple.
+ *
+ * The daemon hands every push to Expo, which forwards it with the key in Paseo's Expo
+ * project — and that project has no key for the bundle id such a build carries, so Expo
+ * refuses and the token is dropped. The patched phone registers its own APNs token,
+ * marked `apns:`, and these go to the sender this plugin keeps in `~/.paseo-voice/push`
+ * (see `push.server.ts`), signed with the key named in `~/.paseo-voice/push.json`. Every
+ * other token goes to Expo exactly as before, and nothing else about when a push is sent
+ * changes: the daemon still decides that.
+ */
+const pushSplices: readonly Splice[] = [
+  {
+    // Upstream's note on the class says Expo and nothing else, which stops being true here.
+    find: `/**
+ * Service for sending Expo push notifications.
+ * Handles batching and invalid token removal.
+ */
+export class PushService {`,
+    replace: `// paseo-voice: a phone built by this plugin registers an APNs token of its own, which
+// the sender this plugin keeps takes straight to Apple; the rest go on to Expo.
+const paseoVoiceApns = async (tokens, payload, service) => {
+    if (tokens.some((token) => token.startsWith("apns:"))) {
+        try {
+            const [os, url] = await Promise.all([import("node:os"), import("node:url")]);
+            const sender = await import(url.pathToFileURL(\`\${os.homedir()}/.paseo-voice/push/apns.mjs\`).href);
+            return await sender.route(tokens, payload, service);
+        }
+        catch (error) {
+            service.logger.error({ err: error }, "paseo-voice: the APNs sender did not load");
+        }
+    }
+    return tokens.filter((token) => !token.startsWith("apns:"));
+};
+export class PushService {`,
+  },
+  {
+    find: `    async sendPush(tokens, payload) {
+        if (tokens.length === 0) {`,
+    replace: `    async sendPush(tokens, payload) {
+        tokens = await paseoVoiceApns(tokens, payload, this);
+        if (tokens.length === 0) {`,
+  },
+];
+
+/**
  * Makes the desktop client ask this plugin for its waiting cue instead of playing the
  * one baked into its bundle.
  *
@@ -504,7 +549,7 @@ export const TARGETS: readonly Target[] = [
     kind: "asar",
     entry: "node_modules/@getpaseo/server/dist/server/server/agent/tts-manager.js",
     splices: ttsSplices,
-    // Paseo 0.10.3, 0.11.1, 0.11.2 and 0.14.0, byte for byte the same file.
+    // Paseo 0.10.3, 0.11.1, 0.11.2, 0.14.0 and 0.15.2, byte for byte the same file.
     verified: ["c0175e3a58b1b6076f7792e5480bd9f5a39d3e1b720427833d89e782d60b4508"],
   },
   {
@@ -515,7 +560,7 @@ export const TARGETS: readonly Target[] = [
     kind: "asar",
     entry: "node_modules/@getpaseo/server/dist/server/server/session/voice/voice-turn-controller.js",
     splices: [...muteSplices, ...prerollSplices, ...detectorSplices],
-    // Paseo 0.10.3, 0.11.1, 0.11.2 and 0.14.0, byte for byte the same file.
+    // Paseo 0.10.3, 0.11.1, 0.11.2, 0.14.0 and 0.15.2, byte for byte the same file.
     verified: ["143bec13ce0c86542ede7f943c543cb90e58179e88a56efeacdf2896a8000697"],
   },
   {
@@ -525,7 +570,7 @@ export const TARGETS: readonly Target[] = [
     kind: "asar",
     entry: "node_modules/@getpaseo/server/dist/server/server/speech/providers/openai/config.js",
     splices: formatSplices,
-    // Paseo 0.14.0, the first with the speech endpoints on each use site.
+    // Paseo 0.14.0, the first with the speech endpoints on each use site, and 0.15.2.
     verified: ["eaddb52ab59b6336456ad851f12991917988cbd9db09411978db529bbab0105d"],
   },
   {
@@ -535,7 +580,7 @@ export const TARGETS: readonly Target[] = [
     kind: "asar",
     entry: "node_modules/@getpaseo/server/dist/server/server/speech/providers/openai/tts.js",
     splices: replySplices,
-    // Paseo 0.13.2 and 0.14.0, byte for byte the same file.
+    // Paseo 0.13.2, 0.14.0 and 0.15.2, byte for byte the same file.
     verified: ["ac6e23b2210bd5d3af8f4f02989ab5ed5b67cc922ccb74cd110c1c10f92e5205"],
   },
   {
@@ -546,7 +591,7 @@ export const TARGETS: readonly Target[] = [
     kind: "asar",
     entry: "node_modules/@getpaseo/server/dist/server/server/session/voice/voice-session.js",
     splices: [...abortSplices, ...voiceOpusSplices],
-    // Paseo 0.11.1, 0.11.2 and 0.14.0, byte for byte the same file.
+    // Paseo 0.11.1, 0.11.2, 0.14.0 and 0.15.2, byte for byte the same file.
     verified: ["0db7bd264ff2416b2ead22abdee4935f060ae1e341f9a2641c0f82a146e15fe3"],
   },
   {
@@ -556,8 +601,18 @@ export const TARGETS: readonly Target[] = [
     kind: "asar",
     entry: "node_modules/@getpaseo/server/dist/server/server/dictation/dictation-stream-manager.js",
     splices: dictationOpusSplices,
-    // Paseo 0.11.2 and 0.14.0, byte for byte the same file.
+    // Paseo 0.11.2, 0.14.0 and 0.15.2, byte for byte the same file.
     verified: ["e188e9451878e610356af8ea75716b7a05963ae414d11bfa8f89bfe0f89bca90"],
+  },
+  {
+    id: "push",
+    title: msg("patch.push.title"),
+    note: msg("patch.push.note"),
+    kind: "asar",
+    entry: "node_modules/@getpaseo/server/dist/server/server/push/push-service.js",
+    splices: pushSplices,
+    // Paseo 0.15.2.
+    verified: ["526aa321eadf4a3db0fd74c2e7eee747de0ae4f0291a2db2c4fffebf7799db00"],
   },
   {
     id: "cue",
@@ -831,6 +886,20 @@ async function located(): Promise<Archive | null> {
   return null;
 }
 
+/**
+ * Which of the files a mask matches is the one meant. One is it. Of several, the one the
+ * page loads: Paseo 0.15 put a chunk it fetches on demand, the QR scanner, beside the
+ * desktop bundle under the same name pattern, and taking the first match took that one.
+ * A page that names none of them, or more than one, settles nothing.
+ */
+export function chooseFile(names: readonly string[], page: string): string {
+  if (names.length <= 1) {
+    return names[0] ?? "";
+  }
+  const loaded = names.filter((name) => page.includes(name));
+  return loaded.length === 1 ? loaded[0]! : "";
+}
+
 /** The plain file a `file` target points at; its name carries a content hash. */
 async function fileOf(target: Target): Promise<string> {
   const [dir, mask] = [path.dirname(target.entry), path.basename(target.entry)];
@@ -840,13 +909,20 @@ async function fileOf(target: Target): Promise<string> {
     if (!archive) {
       continue;
     }
-    const root = path.join(path.dirname(archive), dir);
+    const resources = path.dirname(archive);
+    const root = path.join(resources, dir);
     try {
-      const found = (await readdir(root)).find(
+      const found = (await readdir(root)).filter(
         (name) => name.startsWith(prefix ?? "") && name.endsWith(suffix ?? ""),
       );
-      if (found) {
-        return path.join(root, found);
+      // The page sits at the top of the client's folder, `app-dist/index.html`.
+      const page =
+        found.length > 1
+          ? await readFile(path.join(resources, dir.split("/")[0] ?? "", "index.html"), "utf8").catch(() => "")
+          : "";
+      const chosen = chooseFile(found, page);
+      if (chosen) {
+        return path.join(root, chosen);
       }
     } catch {
       // Not where this one looked. Try the next.

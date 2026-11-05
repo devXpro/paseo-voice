@@ -84,7 +84,7 @@ afterwards. Getting a key, and what it costs, is in [docs/google.md](docs/google
 | 🎙️ **Voice** | Provider, billing family, voice — each with a play button. Tempo and delivery. [docs/voices.md](docs/voices.md) |
 | 📊 **Limits** | A bar per billing family: characters spent this month, hours of speech left, what any overspend cost. [docs/google.md](docs/google.md) |
 | 🎶 **Waiting sound** | What loops while the agent thinks: four shipped tracks, your own files, or silence. [docs/music.md](docs/music.md) |
-| 🩹 **Paseo patch** | One patch, one button: fixes in Paseo's own code, and its audio compressed both ways — the agent's voice as MP3, the phone's microphone as Opus. Put back after a Paseo update when the files are ones it was reviewed against. [docs/patches.md](docs/patches.md) |
+| 🩹 **Paseo patch** | One patch, one button: fixes in Paseo's own code, and its audio compressed both ways — the agent's voice as MP3, the phone's microphone as Opus — plus pushes straight from Apple for a phone built with `ios-build`. Put back after a Paseo update when the files are ones it was reviewed against. [docs/patches.md](docs/patches.md) |
 | 🖥️ **Local engine** | The fallback: binary, model, state. [docs/local-engine.md](docs/local-engine.md) |
 | ⌨️ **Dictation** | Whisper Large v3 Turbo through `whisper-server`: the engine, its weights, a dictionary per language, and handing Paseo's dictation to it. |
 | ⚙️ **Agent speech** | The two daemon settings voice mode cannot work without. [docs/patches.md](docs/patches.md#the-two-daemon-settings) |

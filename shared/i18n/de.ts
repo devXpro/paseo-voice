@@ -177,6 +177,8 @@ export const de: Dictionary = {
     "Nach einem nicht erkannten Satz sind die Antworten des Agenten wieder zu hören; die Stimme vom Handy kommt komprimiert als Opus an",
   "patch.dictation.title": "Diktat in Opus",
   "patch.dictation.note": "Beim Diktieren kommt die Stimme vom Handy komprimiert als Opus an",
+  "patch.push.title": "Pushes direkt von Apple",
+  "patch.push.note": "Ein mit diesem Plugin gebautes Handy bekommt seine Mitteilungen direkt von Apple, mit deinem eigenen Schlüssel",
   "patch.cue.title": "Eigene Wartemusik",
   "patch.cue.note": "Bringt den unter „Wartemusik“ gewählten Sound ins Desktop-Paseo",
   "patch.archive.title": "Paseo-Archiv",

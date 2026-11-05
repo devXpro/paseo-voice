@@ -39,6 +39,7 @@ import { speechLanguageOf } from "./shared/languages.shared.ts";
 import { msg, sayAll } from "./shared/i18n/index.ts";
 import { installBinary } from "./server/binary.server.ts";
 import { ensureCodec } from "./server/codec.server.ts";
+import { ensurePush } from "./server/push.server.ts";
 import { describeRpc, describeVoice } from "./server/capabilities.server.ts";
 import { createController } from "./server/controller.server.ts";
 import { createEngine } from "./server/engine.server.ts";
@@ -123,6 +124,9 @@ export default function contribute(server: PluginServerContext) {
 
   // The decoder the daemon's correction loads to hear a phone's microphone as Opus.
   void ensureCodec().catch((failure: unknown) => log(`voice: Opus decoder: ${String(failure)}`));
+
+  // The sender the daemon's push correction loads for a phone built by ios-build/.
+  void ensurePush().catch((failure: unknown) => log(`voice: APNs sender: ${String(failure)}`));
 
   /** Every mutation answers with the whole status; the proxy's view is refreshed with it. */
   const fresh = <T>(status: T): T => {

@@ -124,7 +124,8 @@ RAISE="$RAISE" awk '{ print } /^[[:space:]]*post_install do \|installer\|[[:spac
 # A free Apple ID is a "personal team", and Apple does not issue those a profile for
 # an app that declares push — the build fails outright with nothing else wrong. The
 # capability is not needed to hear the thing this build exists to change, so it goes.
-# With a paid certificate set KEEP_PUSH=1 and it stays.
+# With a paid team set KEEP_PUSH=1 and it stays: the phone then registers its own APNs
+# token, and the plugin's daemon correction sends to it with your key (docs/ios.md#push).
 ENTITLEMENTS="$(find "$CHECKOUT/packages/app/ios" -maxdepth 2 -name '*.entitlements' | head -1)"
 if [ -n "$ENTITLEMENTS" ] && [ -z "${KEEP_PUSH:-}" ]; then
   /usr/libexec/PlistBuddy -c "Delete :aps-environment" "$ENTITLEMENTS" 2>/dev/null \
@@ -157,31 +158,6 @@ grep -aq "BUILD SUCCEEDED" "$WORK/xcodebuild.log" || die "the build failed; deta
 
 APP="$(find "$DERIVED/Build/Products/Release-iphoneos" -maxdepth 1 -name '*.app' | head -1)"
 [ -n "$APP" ] || die "the build left no .app behind"
-
-# Xcode 27's SDK stops at launch any app that has not moved to the scene life cycle: a
-# trap in UIKit's _UIApplicationEvaluateRuntimeIssueForNoSceneLifecycleAdoption the
-# moment the icon is tapped. Paseo has not moved yet, and UIKit goes by the SDK written
-# into the binary, not by the iOS it runs on — the same app built with SDK 26 runs on
-# iOS 27. So until Paseo declares a scene manifest of its own, the binary says SDK 26.2
-# and is signed again, with the identity and entitlements Xcode gave it.
-INFO="$APP/Info.plist"
-BIN="$APP/$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$INFO")"
-SDK="$(xcrun vtool -show-build "$BIN" 2>/dev/null | awk '$1 == "sdk" { print $2 }' || true)"
-if [ "${SDK%%.*}" -ge 27 ] 2>/dev/null \
-   && ! /usr/libexec/PlistBuddy -c 'Print :UIApplicationSceneManifest' "$INFO" >/dev/null 2>&1; then
-  MINOS="$(xcrun vtool -show-build "$BIN" | awk '$1 == "minos" { print $2 }')"
-  SIGNER="$(codesign -dvv "$APP" 2>&1 | sed -n 's/^Authority=//p' | head -1)"
-  codesign -d --entitlements - --xml "$APP" > "$WORK/entitlements.plist" 2>/dev/null
-  xcrun vtool -set-build-version ios "$MINOS" 26.2 -replace -output "$BIN.sdk26" "$BIN" 2>/dev/null \
-    || die "could not mark the app as built with SDK 26.2"
-  # Written over, not moved: the binary keeps its own mode.
-  cat "$BIN.sdk26" > "$BIN" && rm "$BIN.sdk26"
-  codesign --force --sign "$SIGNER" --entitlements "$WORK/entitlements.plist" \
-    --generate-entitlement-der --timestamp=none "$APP" \
-    && codesign --verify --deep --strict "$APP" \
-    || die "the app did not sign again after its SDK was marked"
-  echo "  built with SDK $SDK, marked 26.2: Paseo has not adopted the scene life cycle iOS 27 requires"
-fi
 
 say "7/7  Installing on the phone"
 # By identifier shape, not by column: the model name has spaces in it and the columns

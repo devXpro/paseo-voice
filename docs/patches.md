@@ -6,7 +6,8 @@ Underneath it is a correction per file, each checked and kept on its own — tha
 the sections below describe.
 
 They exist because there is no seam for them: bugs with no setting behind them, the
-audio Paseo sends both ways uncompressed, and a sound with no setting behind it.
+audio Paseo sends both ways uncompressed, a sound with no setting behind it, and pushes
+that cannot reach a phone this plugin built.
 Everything this plugin could do through the published plugin API, it does through the
 published plugin API.
 
@@ -238,6 +239,41 @@ so that every sequence number arrives, and is not sent at all in voice mode.
 answers no, and every phone sends PCM from its next voice session or dictation — no
 restart, no rebuild. The way out when a phone's build gets the encoding wrong.
 
+## Pushes straight from Apple
+
+`@getpaseo/server/.../push/push-service.js`
+
+For a phone built with [ios-build](ios.md), on a paid team. Paseo's daemon sends every
+push through Expo's push service, which forwards it to Apple with a key kept in Paseo's
+own Expo project. That project holds no key for the bundle id a build of `ios-build/`
+carries, `sh.paseo.debug.<team>`, so Expo refused every push to it and the daemon
+dropped the token.
+
+The patched phone registers its own APNs token instead, marked
+`apns:<environment>:<bundle id>:<device token>`, and this correction hands the marked
+ones to a sender this plugin keeps in `~/.paseo-voice/push/apns.mjs`. It signs with your
+team's APNs key and posts to Apple — the sandbox for a development build, production
+for any other — laid out as Expo lays it out, so the app opens the right agent when the
+notification is tapped. Every other token goes to Expo exactly as before, and when a
+push is sent is still the daemon's decision: only when no app has been in use for three
+minutes, otherwise the notice stays inside the app.
+
+The key never passes through the plugin. `~/.paseo-voice/push.json` names the file:
+
+```json
+{ "keyId": "ABC123DEFG", "teamId": "TEAM123456", "keyFile": "/path/to/AuthKey_ABC123DEFG.p8" }
+```
+
+An APNs key is made once under Certificates, Identifiers & Profiles → Keys, with Apple
+Push Notifications service on; one key serves every app of the team. Without the file,
+or with a key Apple refuses, the push is not sent and the daemon log says why — every
+line of the sender's starts with `paseo-voice:`. A token Apple calls dead is revoked, as
+the daemon revokes one Expo calls dead; the phone registers it again on its next
+connection.
+
+The class's own comment, which says Expo and nothing else, makes way for the
+correction: the file has to keep its length.
+
 ## Your own waiting music
 
 `app-dist/_expo/static/js/web/index-*.js` — the desktop client's bundle, a plain file
@@ -265,7 +301,9 @@ between sentences. The phone build closes that properly, by holding the cue back
 as long as a `speak` call is in flight (see [ios.md](ios.md)); the desktop is next.
 
 This one is matched by shape rather than by exact text, because the bundle is minified
-and its identifiers change between builds.
+and its identifiers change between builds. Since Paseo 0.15 a second file sits beside it
+under the same name pattern, a chunk the QR scanner is loaded from; the bundle meant is
+the one `app-dist/index.html` loads.
 
 ## Put back after every update
 

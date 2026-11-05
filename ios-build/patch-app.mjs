@@ -279,15 +279,15 @@ await splice(
 
 await splice(
   app("src/plugins/evaluate.ts"),
-  `    if (name === "@getpaseo/plugin/client/react-native") {
-      return pluginReactNativeRuntime;
-    }`,
+  `    if (name === "@getpaseo/plugin/client/react-native") return pluginReactNativeCompatRuntime;`,
   `    if (name === "@getpaseo/plugin/client/react-native") {
       // paseo-voice: a plugin cannot otherwise make a sound on a phone. Added to this
       // module rather than a new one so nothing has to become external in the
       // daemon's bundler; a plugin feature-tests the field and does without it.
       const engine = (globalThis as { __paseoVoiceEngine?: unknown }).__paseoVoiceEngine;
-      return engine ? { ...pluginReactNativeRuntime, audioEngine: engine } : pluginReactNativeRuntime;
+      return engine
+        ? { ...pluginReactNativeCompatRuntime, audioEngine: engine }
+        : pluginReactNativeCompatRuntime;
     }`,
   "plugins can reach the audio engine",
 );
@@ -708,6 +708,47 @@ await splice(
         player.remove();
       }`,
   "stopping MP3 speech stops it",
+);
+
+/**
+ * 10. Pushes reach this build.
+ *
+ * Upstream asks Expo for a push token in Paseo's own Expo project, and the daemon sends
+ * through Expo, which signs for Apple with the key kept in that project. That project has
+ * no key for `sh.paseo.debug.<team>`, so every push to this build was refused and the
+ * token dropped. The phone hands the daemon its own APNs token instead, marked with the
+ * environment its profile pushes in and its bundle id; the plugin's correction in the
+ * daemon sends to it straight from Apple with your team's key. See docs/ios.md#push.
+ *
+ * Only a build that keeps the push entitlement gets a token at all (`KEEP_PUSH=1`, a paid
+ * team); without it the call fails as upstream's does, and nothing is registered.
+ */
+await splice(
+  app("src/push-notifications/internal/subscriptions.ts"),
+  `import Constants from "expo-constants";`,
+  `import * as Application from "expo-application";
+import Constants from "expo-constants";`,
+  "the push subscription can read the app's own identity",
+);
+
+await splice(
+  app("src/push-notifications/internal/subscriptions.ts"),
+  `  const projectId = getExpoProjectId();`,
+  `  // paseo-voice: this build's bundle id is its own team's, and Paseo's Expo project has
+  // no key for it, so an Expo token here is one no push ever reaches. The daemon gets
+  // the phone's own APNs token instead, and the plugin sends to it straight from Apple.
+  if (Platform.OS === "ios") {
+    const [device, environment] = await Promise.all([
+      Notifications.getDevicePushTokenAsync(),
+      Application.getIosPushNotificationServiceEnvironmentAsync(),
+    ]);
+    const apnsToken = \`apns:\${environment ?? "development"}:\${Application.applicationId}:\${String(device.data)}\`;
+    await AsyncStorage.setItem(key, apnsToken);
+    return apnsToken;
+  }
+
+  const projectId = getExpoProjectId();`,
+  "pushes come straight from Apple",
 );
 
 // 3. The test that pins the old tone's length, which would now fail the build.
