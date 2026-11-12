@@ -36,6 +36,14 @@ const MODEL_NOTES: Record<string, Key> = {
   "large-v3-turbo": "dictation.full",
 };
 
+/** Paseo's own recognisers by the names people know them by; any other id as it is. */
+const STT_TITLES: Record<string, string> = {
+  "giga-am-v3-ru": "GigaAM v3",
+  "parakeet-tdt-0.6b-v3-int8": "Parakeet v3",
+  "parakeet-tdt-0.6b-v2-int8": "Parakeet v2",
+};
+const sttTitle = (id: string) => STT_TITLES[id] ?? id;
+
 /** A voice by its own name: the accent is chosen above, the family beside it. */
 const short = (name: string) =>
   name.replace(/^[a-z]{2,3}-[A-Z]{2}-/, "").replace("Chirp3-HD-", "").replace(/^(Standard|Wavenet)-/, "");
@@ -599,6 +607,7 @@ export const SECTIONS: Section[] = [
     Component: (lab) => {
       const { data, theme, act, tr } = lab;
       const w = data.whisper;
+      const own = data.localStt.dictation;
       const ready = w.engineInstalled && w.models.some((one) => one.installed);
       const chosen = w.models.find((one) => one.id === w.model);
 
@@ -730,8 +739,24 @@ export const SECTIONS: Section[] = [
               }
               value={w.wired}
               onChange={(next) => act.wireDictation(next)}
-              last
+              last={w.wired}
             />
+            {w.wired ? null : (
+              <Row
+                theme={theme}
+                label={tr.t("dictation.paseoOwn")}
+                hint={
+                  own.current === own.wanted
+                    ? tr.t("dictation.paseoOwnHint")
+                    : tr.t("dictation.paseoSwitch", { model: sttTitle(own.wanted) })
+                }
+                value={own.current ? sttTitle(own.current) : "—"}
+                valueColour={tone(theme, own.current === own.wanted ? "ok" : "warn")}
+                action={own.current !== own.wanted && !w.busy ? tr.t("dictation.switch") : undefined}
+                onPress={own.current !== own.wanted && !w.busy ? () => act.wireDictation(false) : undefined}
+                last
+              />
+            )}
           </Group>
         </View>
       );
@@ -827,6 +852,17 @@ export const SECTIONS: Section[] = [
               hint="features.voiceMode.tts.baseUrl"
               value={data.wired ? tr.t("paseo.atPlugin") : tr.t("paseo.elsewhere")}
               valueColour={tone(theme, data.wired ? "ok" : "warn")}
+            />
+            <Row
+              theme={theme}
+              label={tr.t("paseo.listens")}
+              hint={
+                data.localStt.voice.current === data.localStt.voice.wanted
+                  ? "features.voiceMode.stt.model"
+                  : tr.t("paseo.listensSwitch", { model: sttTitle(data.localStt.voice.wanted) })
+              }
+              value={data.localStt.voice.current ? sttTitle(data.localStt.voice.current) : "—"}
+              valueColour={tone(theme, data.localStt.voice.current === data.localStt.voice.wanted ? "ok" : "warn")}
             />
             <Row
               theme={theme}

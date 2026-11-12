@@ -71,9 +71,56 @@ test("wiring points voice mode at the proxy and at a recogniser for the chosen l
   // Placeholders; the real speaker is substituted by the proxy.
   assert.equal(config.features.voiceMode.tts.model, "tts-1");
   assert.equal(config.features.voiceMode.tts.voice, "alloy");
-  // v2 is English-only and is the default — the reason voice mode in another language is silent.
-  assert.equal(config.features.voiceMode.stt.model, "parakeet-tdt-0.6b-v3-int8");
+  assert.equal(config.features.voiceMode.stt.model, "giga-am-v3-ru");
   assert.equal(config.features.voiceMode.stt.language, "ru");
+});
+
+/**
+ * Paseo's default, Parakeet v2, is English-only — the reason voice mode in another
+ * language is silent. v3 covers twenty-five languages; Russian has GigaAM, which makes
+ * fewer mistakes in it.
+ */
+test("voice mode listens with GigaAM in Russian and with Parakeet v3 in the other languages", async () => {
+  const home = await withHome({ features: { voiceMode: { stt: { provider: "local", model: "parakeet-tdt-0.6b-v2-int8" } } } });
+  const { wire } = await import("./config.server.ts");
+
+  await wire(8123, "ru");
+  assert.equal((await readConfig(home)).features.voiceMode.stt.model, "giga-am-v3-ru");
+  await wire(8123, "en");
+  assert.equal((await readConfig(home)).features.voiceMode.stt.model, "parakeet-tdt-0.6b-v3-int8", "GigaAM knows Russian only");
+});
+
+test("a recogniser chosen by hand on Paseo's Voice page is kept", async () => {
+  const home = await withHome({
+    features: {
+      voiceMode: { stt: { provider: "local", model: "whisper-turbo" } },
+      dictation: { stt: { provider: "local", model: "whisper-turbo" } },
+    },
+  });
+  const { wire, wireDictation } = await import("./config.server.ts");
+
+  await wire(8123, "ru");
+  await wireDictation(8123, false, "large-v3-turbo", "ru");
+
+  const config = await readConfig(home);
+  assert.equal(config.features.voiceMode.stt.model, "whisper-turbo");
+  assert.equal(config.features.dictation.stt.model, "whisper-turbo");
+});
+
+test("the panel learns what Paseo's own recogniser runs and what it would be switched to", async () => {
+  await withHome({
+    features: {
+      voiceMode: { stt: { provider: "local", model: "parakeet-tdt-0.6b-v3-int8", language: "ru" } },
+      dictation: { stt: { provider: "openai", baseUrl: "http://127.0.0.1:8123/v1", model: "large-v3-turbo" } },
+    },
+  });
+  const { localStt } = await import("./config.server.ts");
+
+  assert.deepEqual(await localStt("ru"), {
+    voice: { current: "parakeet-tdt-0.6b-v3-int8", wanted: "giga-am-v3-ru" },
+    dictation: { current: "", wanted: "giga-am-v3-ru" },
+  });
+  assert.deepEqual((await localStt("de")).voice, { current: "parakeet-tdt-0.6b-v3-int8", wanted: "parakeet-tdt-0.6b-v3-int8" });
 });
 
 test("wiring survives a missing config file", async () => {
@@ -157,7 +204,7 @@ test("unwiring leaves no key or address on the local site, which would not accep
 
   assert.deepEqual((await readConfig(home)).features.dictation.stt, {
     provider: "local",
-    model: "parakeet-tdt-0.6b-v3-int8",
+    model: "giga-am-v3-ru",
     language: "ru",
   });
 });

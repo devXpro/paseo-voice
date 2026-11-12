@@ -7,7 +7,7 @@ import type { UiLanguage } from "../shared/i18n/languages.ts";
 import { isSpeechLocale, localeOfVoice, speechLanguageOf } from "../shared/languages.shared.ts";
 import { LOCAL_MODEL, type status as statusSchema } from "../shared/voice.shared.ts";
 import { installedRelease } from "./binary.server.ts";
-import { isDictationWired, isWired, wire, wireDictation as writeDictation } from "./config.server.ts";
+import { isDictationWired, isWired, localStt, wire, wireDictation as writeDictation } from "./config.server.ts";
 import {
   DEFAULT_PROMPT,
   daemonUptime,
@@ -255,6 +255,7 @@ export function createController(options: {
 
       proxy: proxy(),
       wired: await isWired(stored.port),
+      localStt: await localStt(whisperOf(stored)),
       restartRequired,
       settings: await inspectSettings(stored.prompt),
       cues,

@@ -10,13 +10,38 @@ import path from "node:path";
 const configPath = () => path.join(process.env.PASEO_HOME || path.join(homedir(), ".paseo"), "config.json");
 
 /**
- * The local STT model voice mode should transcribe with. The default is Parakeet v2,
+ * The local STT model voice mode should transcribe with outside Russian. The default is Parakeet v2,
  * which is English-only — the reason voice mode in any other language produces silence
  * out of the box.
  * v3 covers 25 European languages and auto-detects, and the daemon downloads it itself
  * when the config names a model that is not on disk yet.
  */
 const VOICE_STT_MODEL = "parakeet-tdt-0.6b-v3-int8";
+
+/**
+ * Russian gets a model of its own: GigaAM v3, which Paseo carries in its catalogue too.
+ * It makes fewer mistakes in Russian than Parakeet v3 (5.35% against 6.54% of words on
+ * FLEURS), with punctuation, at a quarter of the download.
+ */
+const RUSSIAN_STT_MODEL = "giga-am-v3-ru";
+
+/**
+ * The models this plugin may replace: the ones it writes itself, and Paseo's
+ * English-only default, which nobody chose. Anything else was picked by hand on Paseo's
+ * Voice page and is kept.
+ */
+const REPLACEABLE_STT_MODELS = new Set([VOICE_STT_MODEL, RUSSIAN_STT_MODEL, "parakeet-tdt-0.6b-v2-int8"]);
+
+/** The local recogniser for `language`, given the one a site names now, if any. */
+export function localSttModel(language: string, current?: unknown): string {
+  if (typeof current === "string" && current !== "" && !REPLACEABLE_STT_MODELS.has(current)) {
+    return current;
+  }
+  return language === "ru" ? RUSSIAN_STT_MODEL : VOICE_STT_MODEL;
+}
+
+/** The model a site runs locally, or nothing when it is not a local site. */
+const localModelOf = (site: Json): unknown => (site.provider === "local" ? site.model : undefined);
 
 type Json = Record<string, unknown>;
 
@@ -95,7 +120,11 @@ export async function wireDictation(
   } else {
     // Back to what Paseo ships with, rather than leaving it pointed at a dead port. The
     // local shape is strict: a leftover key or address would make the daemon refuse the site.
-    dictation.stt = { provider: "local", model: VOICE_STT_MODEL, ...(site.language ? { language: site.language } : {}) };
+    dictation.stt = {
+      provider: "local",
+      model: localSttModel(language, localModelOf(site)),
+      ...(site.language ? { language: site.language } : {}),
+    };
   }
 
   features.dictation = dictation;
@@ -109,6 +138,28 @@ export async function wireDictation(
   await writeFile(staged, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });
   await rename(staged, target);
   return true;
+}
+
+/**
+ * What Paseo's own recogniser runs in each feature: what the config names now, and
+ * what writing it for `language` would name. Dictation's `current` is empty while it
+ * reads through this plugin.
+ */
+export async function localStt(language: string): Promise<{
+  voice: { current: string; wanted: string };
+  dictation: { current: string; wanted: string };
+}> {
+  const features = object((await read()).features);
+  const voice = object(object(features.voiceMode).stt);
+  const dictation = object(object(features.dictation).stt);
+  const named = (site: Json) => {
+    const model = localModelOf(site);
+    return typeof model === "string" ? model : "";
+  };
+  return {
+    voice: { current: named(voice), wanted: localSttModel(language, localModelOf(voice)) },
+    dictation: { current: named(dictation), wanted: localSttModel(language, localModelOf(dictation)) },
+  };
 }
 
 /** Whether voice mode currently reads through a proxy on `port`. */
@@ -133,7 +184,8 @@ export async function wire(port: number, language: string): Promise<boolean> {
   const features = object(config.features);
   const voiceMode = object(features.voiceMode);
   voiceMode.enabled = true;
-  voiceMode.stt = { ...object(voiceMode.stt), provider: "local", model: VOICE_STT_MODEL, language };
+  const stt = object(voiceMode.stt);
+  voiceMode.stt = { ...stt, provider: "local", model: localSttModel(language, localModelOf(stt)), language };
   voiceMode.tts = {
     ...object(voiceMode.tts),
     provider: "openai",

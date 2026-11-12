@@ -8,8 +8,8 @@
  * language suite of the live tests.
  *
  * What is not here, on purpose: Paseo's own recogniser in voice mode. Parakeet v3
- * covers twenty-five European languages and detects which one it hears, so it needs
- * no telling.
+ * covers twenty-five European languages and detects which one it hears; Russian gets
+ * GigaAM instead, chosen in `config.server.ts`.
  */
 
 export const SPEECH_LANGUAGE_IDS = ["en", "es", "fr", "pt", "de", "ru", "uk"] as const;

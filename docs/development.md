@@ -62,7 +62,7 @@ documentation that cannot go stale without going red.
 
 ## What the tests cover
 
-195 of them, all `node:test`, no framework and no mocking library.
+198 of them, all `node:test`, no framework and no mocking library.
 
 The ones worth knowing about:
 
@@ -104,8 +104,8 @@ for this Mac, which needs Xcode's command-line tools; the live runs encode with
 engine's name for it or `null`, a short audition line, and the speaking rate, measured
 the way the table's comment says. Then a case in `e2e/live/languages.live.ts`: a
 question with a one-word answer, the regexes that catch both, and a sentence to dictate.
-Check that Parakeet v3, Paseo's recogniser in voice mode, knows the language — it covers
-twenty-five European ones.
+Check that Parakeet v3, Paseo's recogniser in voice mode outside Russian, knows the
+language — it covers twenty-five European ones.
 
 **One to read the panel in.** A file in `shared/i18n/` exporting a `Dictionary`, its
 id and native name in `shared/i18n/languages.ts`, and a branch in `pluralOf` if its

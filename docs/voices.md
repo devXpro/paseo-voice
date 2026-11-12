@@ -20,9 +20,14 @@ panel itself is in:
 **One choice drives everything.** The voice switches to the one last chosen for that
 accent, or the first time to the accent's default — Orus, which every accent with
 Chirp 3 HD has. Dictation listens for the language with that language's own dictionary,
-and the allowance estimate uses its speaking rate. Paseo's own recogniser in voice mode,
-Parakeet v3, needs no telling: it detects the language of what it hears among
-twenty-five European ones.
+and the allowance estimate uses its speaking rate. Paseo's own recogniser in voice mode
+is chosen by language when **Connection** writes the config: GigaAM v3 for Russian,
+which makes fewer mistakes in it, and Parakeet v3 for the rest, which detects the
+language it hears among twenty-five European ones. A model picked by hand on Paseo's
+Voice page is kept. Since the recogniser lives in Paseo's config, a change of language
+does not switch it by itself: **Connection** shows what it hears with and what would
+suit the language better, and writing it costs Paseo a restart. The same goes for
+dictation while it is left to Paseo rather than this plugin's Whisper.
 
 **Changing it never restarts Paseo.** Nothing in Paseo's config depends on it; only
 the plugin's own dictation engine restarts, which takes a second. One engine at a time:

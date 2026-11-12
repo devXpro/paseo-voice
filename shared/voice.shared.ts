@@ -75,6 +75,10 @@ export const whisperModel = z.object({
  * confident nonsense. The engine here is `whisper-server` — the one part that has to be a native
  * binary — and everything around it, including installing it, is the plugin's job.
  */
+const localSttSite = z
+  .object({ current: z.string().default(""), wanted: z.string().default("") })
+  .default({ current: "", wanted: "" });
+
 export const whisperState = z.object({
   /** Whether `whisper-server` is on this machine, and where. */
   enginePath: z.string().default(""),
@@ -205,6 +209,14 @@ export const status = z.object({
   }),
 
   wired: z.boolean().default(false),
+  /**
+   * Paseo's own recogniser in voice mode and in dictation: the model the config names
+   * now ("" when it is not a local one), and the one this plugin would write for the
+   * language chosen. They differ until somebody presses the button that writes it.
+   */
+  localStt: z
+    .object({ voice: localSttSite, dictation: localSttSite })
+    .default({ voice: { current: "", wanted: "" }, dictation: { current: "", wanted: "" } }),
   restartRequired: z.boolean().default(false),
   settings: daemonSettings,
   prompt: promptState,

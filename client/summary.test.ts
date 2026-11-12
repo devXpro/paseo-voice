@@ -31,6 +31,7 @@ const base: Status = {
   uiLanguage: "ru",
   proxy: { listening: true, port: 8123, error: "" },
   wired: true,
+  localStt: { voice: { current: "", wanted: "" }, dictation: { current: "", wanted: "" } },
   restartRequired: false,
   settings: { mcpInjected: true, promptSet: true, foreignPrompt: false, configPath: "", error: "" },
   prompt: { text: "Говори всё вслух.", isDefault: true, defaultText: "Говори всё вслух." },
